@@ -207,7 +207,7 @@ export default function LoginPage() {
                                     <Input
                                         label="Username"
                                         required
-                                        placeholder="your_username"
+                                        placeholder="username"
                                         autoComplete="username"
                                         autoFocus
                                         error={errors.username?.message}
