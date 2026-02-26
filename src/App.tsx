@@ -2,36 +2,49 @@
 // import { useEffect } from "react";
 // import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // import { Toaster } from "sonner";
+// import { useAuthStore } from "@/stores/authStore";
+// import { AppShell } from "@/components/layout/AppShell";
 // import OnboardingPage from "@/pages/OnboardingPage";
 // import LoginPage from "@/pages/LoginPage";
-// import { useAuthStore } from "@/stores/authStore";
+// import DrugListPage from "@/pages/DrugListPage";
+// import InventoryPage from "@/pages/InventoryPage";
 
 // const queryClient = new QueryClient({
 //   defaultOptions: {
-//     queries: {
-//       staleTime: 1000 * 60 * 5,
-//       retry: 1,
-//     },
+//     queries: { staleTime: 1000 * 60 * 5, retry: 1 },
 //   },
 // });
+
+// // Placeholder for pages not yet built
+// function ComingSoon({ label }: { label: string }) {
+//   return (
+//     <div className="flex-1 flex items-center justify-center text-ink-muted">
+//       <p className="text-sm">{label} coming soon</p>
+//     </div>
+//   );
+// }
+
+// function RequireAuth({ children }: { children: React.ReactNode }) {
+//   const { isAuthenticated, activeBranchId } = useAuthStore();
+//   if (!isAuthenticated || !activeBranchId) {
+//     return <Navigate to="/login" replace />;
+//   }
+//   return <>{children}</>;
+// }
 
 // function AppRoutes() {
 //   const { isAuthenticated, activeBranchId, isLoading, initialize } = useAuthStore();
 
 //   useEffect(() => {
 //     initialize();
-
-//     // Listen for forced logout from API client (expired refresh token)
-//     const handler = () => {
-//       window.location.href = "/login";
-//     };
+//     const handler = () => { window.location.href = "/login"; };
 //     window.addEventListener("auth:logout", handler);
 //     return () => window.removeEventListener("auth:logout", handler);
 //   }, [initialize]);
 
 //   if (isLoading) {
 //     return (
-//       <div className="min-h-screen bg-surface flex items-center justify-center">
+//       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
 //         <div className="flex flex-col items-center gap-3">
 //           <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
 //           <p className="text-sm text-ink-muted">Loading…</p>
@@ -44,40 +57,68 @@
 
 //   return (
 //     <Routes>
-//       {/* Public routes */}
+//       {/* ── Public ── */}
 //       <Route path="/onboarding" element={<OnboardingPage />} />
 //       <Route
 //         path="/login"
-//         element={
-//           isFullyAuthenticated
-//             ? <Navigate to="/dashboard" replace />
-//             : <LoginPage />
-//         }
+//         element={isFullyAuthenticated ? <Navigate to="/drugs" replace /> : <LoginPage />}
 //       />
 
-//       {/* Protected placeholder — replace with real Dashboard later */}
+//       {/* ── Protected (all wrapped in AppShell) ── */}
 //       <Route
-//         path="/dashboard"
+//         path="/drugs"
 //         element={
-//           isFullyAuthenticated
-//             ? <div className="min-h-screen flex items-center justify-center font-display text-2xl text-ink">Dashboard coming soon</div>
-//             : <Navigate to="/login" replace />
+//           <RequireAuth>
+//             <AppShell><DrugListPage /></AppShell>
+//           </RequireAuth>
+//         }
+//       />
+//       <Route
+//         path="/inventory"
+//         element={
+//           <RequireAuth>
+//             <AppShell><InventoryPage /></AppShell>
+//           </RequireAuth>
+//         }
+//       />
+//       <Route
+//         path="/pos"
+//         element={
+//           <RequireAuth>
+//             <AppShell><ComingSoon label="Point of Sale" /></AppShell>
+//           </RequireAuth>
+//         }
+//       />
+//       <Route
+//         path="/customers"
+//         element={
+//           <RequireAuth>
+//             <AppShell><ComingSoon label="Customers" /></AppShell>
+//           </RequireAuth>
+//         }
+//       />
+//       <Route
+//         path="/purchases"
+//         element={
+//           <RequireAuth>
+//             <AppShell><ComingSoon label="Purchases" /></AppShell>
+//           </RequireAuth>
+//         }
+//       />
+//       <Route
+//         path="/reports"
+//         element={
+//           <RequireAuth>
+//             <AppShell><ComingSoon label="Reports" /></AppShell>
+//           </RequireAuth>
 //         }
 //       />
 
-//       {/* Root redirect */}
+//       {/* ── Redirects ── */}
 //       <Route
 //         path="/"
-//         element={
-//           isFullyAuthenticated
-//             ? <Navigate to="/dashboard" replace />
-//             : isAuthenticated
-//               ? <Navigate to="/login" replace /> // authenticated but no branch
-//               : <Navigate to="/login" replace />
-//         }
+//         element={<Navigate to={isFullyAuthenticated ? "/drugs" : "/login"} replace />}
 //       />
-
-//       {/* Catch-all */}
 //       <Route path="*" element={<Navigate to="/" replace />} />
 //     </Routes>
 //   );
@@ -94,10 +135,11 @@
 //   );
 // }
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { useAuthStore } from "@/stores/authStore";
+import { syncEngine } from "@/lib/syncEngine";
 import { AppShell } from "@/components/layout/AppShell";
 import OnboardingPage from "@/pages/OnboardingPage";
 import LoginPage from "@/pages/LoginPage";
@@ -110,7 +152,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// Placeholder for pages not yet built
 function ComingSoon({ label }: { label: string }) {
   return (
     <div className="flex-1 flex items-center justify-center text-ink-muted">
@@ -124,6 +165,56 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated || !activeBranchId) {
     return <Navigate to="/login" replace />;
   }
+  return <>{children}</>;
+}
+
+/**
+ * SyncGate — waits for the very first pull to complete before rendering
+ * the app so the local DB is populated before any page tries to read it.
+ * Only shown when the user is fully authenticated and the sync engine
+ * is in its initial "syncing" state.
+ */
+function SyncGate({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, activeBranchId } = useAuthStore();
+  const [initialSyncDone, setInitialSyncDone] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated || !activeBranchId) {
+      setInitialSyncDone(false);
+      return;
+    }
+
+    // Give the engine 300 ms to kick off; if it's already idle it's done
+    const timer = setTimeout(() => setInitialSyncDone(true), 300);
+
+    const unsub = syncEngine.subscribe((status) => {
+      if (status === "idle" || status === "offline" || status === "error") {
+        setInitialSyncDone(true);
+      }
+    });
+
+    return () => {
+      clearTimeout(timer);
+      unsub();
+    };
+  }, [isAuthenticated, activeBranchId]);
+
+  if (isAuthenticated && activeBranchId && !initialSyncDone) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+          <div className="text-center">
+            <p className="text-sm font-medium text-ink">Syncing your data…</p>
+            <p className="text-xs text-ink-muted mt-1">
+              Fetching latest drugs, inventory and contracts
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return <>{children}</>;
 }
 
@@ -151,71 +242,28 @@ function AppRoutes() {
   const isFullyAuthenticated = isAuthenticated && !!activeBranchId;
 
   return (
-    <Routes>
-      {/* ── Public ── */}
-      <Route path="/onboarding" element={<OnboardingPage />} />
-      <Route
-        path="/login"
-        element={isFullyAuthenticated ? <Navigate to="/drugs" replace /> : <LoginPage />}
-      />
+    <SyncGate>
+      <Routes>
+        {/* ── Public ── */}
+        <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route
+          path="/login"
+          element={isFullyAuthenticated ? <Navigate to="/drugs" replace /> : <LoginPage />}
+        />
 
-      {/* ── Protected (all wrapped in AppShell) ── */}
-      <Route
-        path="/drugs"
-        element={
-          <RequireAuth>
-            <AppShell><DrugListPage /></AppShell>
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/inventory"
-        element={
-          <RequireAuth>
-            <AppShell><InventoryPage /></AppShell>
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/pos"
-        element={
-          <RequireAuth>
-            <AppShell><ComingSoon label="Point of Sale" /></AppShell>
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/customers"
-        element={
-          <RequireAuth>
-            <AppShell><ComingSoon label="Customers" /></AppShell>
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/purchases"
-        element={
-          <RequireAuth>
-            <AppShell><ComingSoon label="Purchases" /></AppShell>
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/reports"
-        element={
-          <RequireAuth>
-            <AppShell><ComingSoon label="Reports" /></AppShell>
-          </RequireAuth>
-        }
-      />
+        {/* ── Protected ── */}
+        <Route path="/drugs" element={<RequireAuth><AppShell><DrugListPage /></AppShell></RequireAuth>} />
+        <Route path="/inventory" element={<RequireAuth><AppShell><InventoryPage /></AppShell></RequireAuth>} />
+        <Route path="/pos" element={<RequireAuth><AppShell><ComingSoon label="Point of Sale" /></AppShell></RequireAuth>} />
+        <Route path="/customers" element={<RequireAuth><AppShell><ComingSoon label="Customers" /></AppShell></RequireAuth>} />
+        <Route path="/purchases" element={<RequireAuth><AppShell><ComingSoon label="Purchases" /></AppShell></RequireAuth>} />
+        <Route path="/reports" element={<RequireAuth><AppShell><ComingSoon label="Reports" /></AppShell></RequireAuth>} />
 
-      {/* ── Redirects ── */}
-      <Route
-        path="/"
-        element={<Navigate to={isFullyAuthenticated ? "/drugs" : "/login"} replace />}
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        {/* ── Redirects ── */}
+        <Route path="/" element={<Navigate to={isFullyAuthenticated ? "/drugs" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </SyncGate>
   );
 }
 
