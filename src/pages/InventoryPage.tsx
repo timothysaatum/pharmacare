@@ -10,6 +10,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useDebounce } from "@/hooks/useDebounce";
 import { AddBatchForm } from "@/components/inventory/AddBatchForm";
 import { parseApiError } from "@/api/client";
+import { appEvents, useAppEvent } from "@/lib/events";
 import type { BranchInventoryWithDetails, LowStockItem, ExpiringBatchItem, Drug, DrugBatch } from "@/types";
 
 type ActiveView = "stock" | "low_stock" | "expiring";
@@ -112,6 +113,10 @@ export default function InventoryPage() {
         fetchExpiring();
     }, [fetchLowStock, fetchExpiring]);
 
+    // Auto-refresh when stock changes from any page (DrugListPage batch add, POS sale, etc.)
+    useAppEvent("inventory:changed", fetchInventory);
+    useAppEvent("inventory:changed", fetchLowStock);
+
     // Reset page when search/filter changes
     const prevFilters = useRef({ debouncedSearch, lowStockOnly });
     useEffect(() => {
@@ -139,8 +144,7 @@ export default function InventoryPage() {
 
     const handleBatchAdded = (_batch: DrugBatch) => {
         setAddBatchDrug(null);
-        fetchInventory();
-        fetchLowStock();
+        appEvents.emit("inventory:changed"); // refreshes this page + DrugListPage low stock
     };
 
     const stockStatusBadge = (item: BranchInventoryWithDetails) => {
@@ -165,7 +169,7 @@ export default function InventoryPage() {
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="font-display text-2xl font-bold text-ink">Inventory</h1>
-           AddBatchForm.tsx             <p className="text-sm text-ink-muted mt-0.5">Stock levels and batch tracking for this branch</p>
+                        <p className="text-sm text-ink-muted mt-0.5">Stock levels and batch tracking for this branch</p>
                     </div>
                     <button
                         onClick={() => { fetchInventory(); fetchLowStock(); fetchExpiring(); }}
@@ -430,8 +434,8 @@ export default function InventoryPage() {
                                         </td>
                                         <td className="px-4 py-3 text-center">
                                             <span className={`font-bold text-sm ${item.days_until_expiry <= 30 ? "text-red-600"
-                                                    : item.days_until_expiry <= 60 ? "text-amber-600"
-                                                        : "text-orange-600"
+                                                : item.days_until_expiry <= 60 ? "text-amber-600"
+                                                    : "text-orange-600"
                                                 }`}>
                                                 {item.days_until_expiry}d
                                             </span>

@@ -12,6 +12,7 @@ import { useCategories } from "@/hooks/useCategories";
 import { DrugForm } from "@/components/drugs/DrugForm";
 import { AddBatchForm } from "@/components/inventory/AddBatchForm";
 import { parseApiError } from "@/api/client";
+import { appEvents, useAppEvent } from "@/lib/events";
 import type { Drug, DrugBatch, DrugType } from "@/types";
 
 const DRUG_TYPE_LABELS: Record<string, string> = {
@@ -107,6 +108,9 @@ export default function DrugListPage() {
         return () => abortRef.current?.abort();
     }, [fetchDrugs]);
 
+    // Auto-refresh when any other page mutates drug data (e.g. POS deactivating a drug)
+    useAppEvent("drugs:changed", fetchDrugs);
+
     // Reset to page 1 when filters change (but not when page itself changes)
     const prevFilters = useRef({ debouncedSearch, filterType, filterCategory, filterActive });
     useEffect(() => {
@@ -135,20 +139,27 @@ export default function DrugListPage() {
             setPage(1);
             fetchDrugs();
         }
+        appEvents.emit("drugs:changed"); // notify other pages
     };
 
     const handleBatchAdded = (_batch: DrugBatch) => {
         setAddingBatchFor(null);
         fetchDrugs();
+        appEvents.emit("inventory:changed"); // notify InventoryPage to refresh
     };
 
     const handleToggleActive = async (drug: Drug) => {
         setTogglingId(drug.id);
         setError(null);
+        // Optimistic update — flip instantly
+        setDrugs((prev) => prev.map((d) => (d.id === drug.id ? { ...d, is_active: !d.is_active } : d)));
         try {
             const updated = await drugApi.update(drug.id, { is_active: !drug.is_active });
             setDrugs((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+            appEvents.emit("drugs:changed");
         } catch (err) {
+            // Rollback
+            setDrugs((prev) => prev.map((d) => (d.id === drug.id ? drug : d)));
             setError(parseApiError(err));
         } finally {
             setTogglingId(null);
