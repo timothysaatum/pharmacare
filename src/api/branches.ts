@@ -7,15 +7,15 @@ export const branchApi = {
      * Returns List[BranchListItem] — branches the current user is assigned to.
      * Used post-login to determine single vs multi-branch flow.
      */
-    listMine(): Promise<BranchListItem[]> {
-        return get<BranchListItem[]>("/branches/my-branches");
+    listMine(signal?: AbortSignal): Promise<BranchListItem[]> {
+        return get<BranchListItem[]>("/branches/my-branches", { signal });
     },
 
     /**
      * GET /branches/{id}
-     * Returns full BranchResponse with operating_hours, sync fields etc.
+     * Returns the full Branch response including operating_hours and sync fields.
      */
-    getById(id: string): Promise<Branch> {
-        return get<Branch>(`/branches/${id}`);
+    getById(id: string, signal?: AbortSignal): Promise<Branch> {
+        return get<Branch>(`/branches/${id}`, { signal });
     },
 };

@@ -23,73 +23,31 @@ import {
     getLastSyncAt, setLastSyncAt,
     getPendingQueue, dequeue, markQueueError, getPendingCount,
 } from "@/lib/localDb";
+import type {
+    PullResponse,
+    PushRecord,
+    PushResponse,
+    PushConflict,
+    SyncStatus,
+} from "@/types";
+
+// Re-export SyncStatus so existing callers that import it from this module
+// do not need to update their import paths.
+export type { SyncStatus } from "@/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TYPES  (mirrors backend sync_schemas.py)
+// LOCAL TYPES
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface PullRequest {
-    branch_id: string;
-    last_sync_at: string | null;
-    tables?: string[];
-}
-
-export interface PullResponse {
-    drugs: unknown[];
-    drug_categories: unknown[];
-    price_contracts: unknown[];
-    customers: unknown[];
-    branch_inventory: unknown[];
-    drug_batches: unknown[];
-    sales: unknown[];
-    purchase_orders: unknown[];
-    sync_timestamp: string;
-    has_more: boolean;
-    total_records: number;
-}
-
-export interface PushRecord {
-    table_name: string;
-    local_id: string;
-    operation: "create" | "update" | "delete";
-    sync_version: number;
-    data: Record<string, unknown>;
-    created_offline_at: string;
-}
-
-export interface PushRequest {
-    branch_id: string;
-    records: PushRecord[];
-}
-
-export interface PushConflict {
-    local_id: string;
-    table_name: string;
-    local_version: number;
-    server_version: number;
-    server_record: Record<string, unknown>;
-    resolution: "server_wins" | "local_wins" | "manual_required";
-}
-
-export interface PushResponse {
-    accepted: Array<{ local_id: string; table_name: string; server_id?: string; success: boolean }>;
-    conflicts: PushConflict[];
-    failed: Array<{ local_id: string; table_name: string; success: boolean; error?: string }>;
-    total_received: number;
-    total_accepted: number;
-    total_conflicts: number;
-    total_failed: number;
-    sync_timestamp: string;
-    next_pull_timestamp: string;
-}
-
-export type SyncStatus = "idle" | "syncing" | "error" | "offline";
+type StatusListener = (
+    status: SyncStatus,
+    pendingCount: number,
+    lastSync: string | null
+) => void;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SYNC ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
-
-type StatusListener = (status: SyncStatus, pendingCount: number, lastSync: string | null) => void;
 
 class SyncEngine {
     private branchId: string | null = null;
@@ -113,18 +71,15 @@ class SyncEngine {
     start(branchId: string, intervalMs = 30_000): void {
         this.branchId = branchId;
 
-        // Listen for online/offline events
         window.addEventListener("online", this._onOnline);
         window.addEventListener("offline", this._onOffline);
 
-        // Initial sync on start (if online)
         if (navigator.onLine) {
             this.sync();
         } else {
             this.setStatus("offline");
         }
 
-        // Periodic background sync
         this.intervalId = setInterval(() => {
             if (navigator.onLine && !this._isSyncing) {
                 this.sync();
@@ -160,11 +115,7 @@ class SyncEngine {
         this.setStatus("syncing");
 
         try {
-            // 1. Push pending local records
             const pushTimestamp = await this.push();
-
-            // 2. Pull delta from server using the push response timestamp
-            //    (so we immediately get server-side effects of our push)
             await this.pull(pushTimestamp ?? undefined);
 
             const pending = await getPendingCount();
@@ -173,11 +124,6 @@ class SyncEngine {
         } catch (err) {
             console.error("[SyncEngine] Sync failed:", err);
             this.setStatus("error");
-            // Clear the error state after the next successful interval tick.
-            // This prevents the indicator being stuck on "Sync error" indefinitely
-            // when the failure was transient (e.g. server briefly unreachable).
-            // The interval will call sync() again in 30s; if it succeeds it will
-            // call setStatus("idle") which overwrites this error naturally.
         } finally {
             this._isSyncing = false;
         }
@@ -205,12 +151,9 @@ class SyncEngine {
                 records,
             });
         } catch (err) {
-            // Network error — leave queue intact, retry next cycle
             console.warn("[SyncEngine] Push network error:", err);
             return null;
         }
-
-        // ── Process results ──────────────────────────────────────────
 
         // Accepted → remove from queue, mark local record as synced
         for (const item of response.accepted) {
@@ -221,7 +164,6 @@ class SyncEngine {
         // Conflicts
         for (const conflict of response.conflicts) {
             if (conflict.resolution === "server_wins") {
-                // Overwrite local record with server's version
                 await this.applyServerRecord(conflict.table_name, conflict.server_record);
                 await dequeue(conflict.table_name, conflict.local_id);
                 await this.markSynced(conflict.table_name, conflict.local_id);
@@ -269,10 +211,6 @@ class SyncEngine {
                     last_sync_at: since,
                 });
             } catch (err) {
-                // Network or server error during pull — log it but don't surface
-                // as a permanent error state. The next 30s interval will retry.
-                // We throw so sync() knows the cycle didn't fully complete, but
-                // sync() itself will only set "error" temporarily (see below).
                 console.warn("[SyncEngine] Pull failed:", err);
                 throw err;
             }
@@ -281,7 +219,7 @@ class SyncEngine {
             await setLastSyncAt(response.sync_timestamp);
 
             hasMore = response.has_more;
-            since = response.sync_timestamp; // paginate from where we left off
+            since = response.sync_timestamp;
         }
     }
 
@@ -299,23 +237,19 @@ class SyncEngine {
                 const r = row as Record<string, unknown>;
                 const vals = columns.map((c) => {
                     const v = r[c];
-                    // SQLite stores booleans as 0/1
                     if (typeof v === "boolean") return v ? 1 : 0;
-                    // Arrays/objects stored as JSON strings
                     if (Array.isArray(v) || (typeof v === "object" && v !== null)) {
                         return JSON.stringify(v);
                     }
-                    // Coerce null/undefined for NOT NULL DEFAULT columns.
-                    // Passing null explicitly overrides SQLite DEFAULT and
-                    // violates NOT NULL, even when a default is declared.
                     if (v === null || v === undefined) {
                         if (c === "is_deleted") return 0;
                         if (c === "is_active") return 1;
                         if (c === "insurance_verified") return 0;
                         if (c === "requires_prescription") return 0;
+                        if (c === "receipt_printed") return 0;
+                        if (c === "receipt_emailed") return 0;
                         if (c === "sync_version") return 1;
                         if (c === "sync_status") return "synced";
-                        if (c === "items_json") return "[]";
                         return null;
                     }
                     return v;
@@ -328,7 +262,7 @@ class SyncEngine {
 
                 await db.execute(
                     `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders})
-           ON CONFLICT(id) DO UPDATE SET ${updates}`,
+                     ON CONFLICT(id) DO UPDATE SET ${updates}`,
                     vals
                 );
             }
@@ -404,28 +338,28 @@ class SyncEngine {
             await upsertMany("sales", response.sales, [
                 "id", "organization_id", "branch_id", "sale_number",
                 "customer_id", "customer_name",
-                // financials
-                "subtotal", "contract_discount_amount", "additional_discount_amount",
-                "total_discount_amount", "tax_amount", "total_amount",
+                // financials — aligned to rewritten Sale model
+                "subtotal", "discount_amount", "tax_amount", "total_amount",
                 // contract snapshot
-                "price_contract_id", "contract_name", "contract_type",
-                "contract_discount_percentage",
+                "price_contract_id", "contract_name", "contract_discount_percentage",
                 // payment
                 "payment_method", "payment_status", "amount_paid",
                 "change_amount", "payment_reference",
                 // prescription
-                "prescription_id",
+                "prescription_id", "prescription_number",
+                "prescriber_name",
                 // staff
-                "cashier_id", "cashier_name", "pharmacist_id", "pharmacist_name",
-                "manager_approval_user_id",
+                "cashier_id", "pharmacist_id",
                 // insurance
-                "insurance_claim_number", "insurance_preauth_number",
+                "insurance_claim_number",
                 "patient_copay_amount", "insurance_covered_amount",
                 "insurance_verified", "insurance_verified_at", "insurance_verified_by",
                 // status & audit
                 "notes", "status",
                 "cancelled_at", "cancelled_by", "cancellation_reason",
-                "refund_amount", "refunded_at", "refunded_by",
+                "refund_amount", "refunded_at",
+                // receipt
+                "receipt_printed", "receipt_emailed",
                 // sync
                 "sync_status", "sync_version", "synced_at", "updated_at", "created_at",
             ]);
@@ -439,8 +373,7 @@ class SyncEngine {
                 "approved_at", "expected_delivery_date", "received_date",
                 "notes",
                 // items_json intentionally omitted — PurchaseOrderResponse has no
-                // such field (items are in a separate table). The local column
-                // retains its DEFAULT '[]' and is only written by localWrite.ts.
+                // such field; items are written locally via localWrite.purchaseOrder.
                 "sync_status", "sync_version", "synced_at", "updated_at", "created_at",
             ]);
         }
@@ -448,7 +381,6 @@ class SyncEngine {
 
     // ── Helpers ───────────────────────────────────────────────────────
 
-    /** After a successful push, mark the local record as synced. */
     private async markSynced(
         table: string,
         localId: string,
@@ -458,9 +390,7 @@ class SyncEngine {
         const now = new Date().toISOString();
         try {
             await db.execute(
-                `UPDATE ${table}
-         SET sync_status = 'synced', synced_at = $1
-         WHERE id = $2`,
+                `UPDATE ${table} SET sync_status = 'synced', synced_at = $1 WHERE id = $2`,
                 [now, localId]
             );
         } catch {
@@ -468,14 +398,10 @@ class SyncEngine {
         }
     }
 
-    /** Overwrite a local record with the server's authoritative version. */
     private async applyServerRecord(
         table: string,
         serverRecord: Record<string, unknown>
     ): Promise<void> {
-        // Build as a plain record first, inject the target table, then cast once.
-        // This avoids the double-cast (as PullResponse then as Record<string,unknown>)
-        // that TypeScript rejects when neither type sufficiently overlaps the other.
         const base: Record<string, unknown> = {
             drugs: [], drug_categories: [], price_contracts: [],
             customers: [], branch_inventory: [], drug_batches: [],

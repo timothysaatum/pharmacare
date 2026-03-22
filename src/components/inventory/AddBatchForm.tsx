@@ -76,7 +76,7 @@ export function AddBatchForm({ drug, branchId, onSuccess, onCancel }: AddBatchFo
                 drug_id: drug.id,
                 batch_number: values.batch_number,
                 quantity: values.quantity,
-                remaining_quantity: values.quantity,
+                // remaining_quantity omitted — server always sets it equal to quantity
                 manufacturing_date: values.manufacturing_date || undefined,
                 expiry_date: values.expiry_date,
                 cost_price: values.cost_price,

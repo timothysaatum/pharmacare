@@ -32,14 +32,21 @@ export async function getDb(): Promise<Database> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function runMigrations(db: Database): Promise<void> {
-  // SQLite user_version is a simple integer we use as schema version
   const [{ user_version }] = await db.select<{ user_version: number }[]>(
     "PRAGMA user_version"
   );
 
   if (user_version < 1) await migrate_v1(db);
   if (user_version < 2) await migrate_v2(db);
+  if (user_version < 3) await migrate_v3(db);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRATION V1 — initial schema
+// Sales table aligned to the rewritten Sale model: single discount_amount
+// field (not three separate fields), real prescription/receipt columns added,
+// phantom pre-rewrite columns removed.
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function migrate_v1(db: Database): Promise<void> {
   // ── Org-level tables (pull-only, never written locally except reads) ──
@@ -144,7 +151,6 @@ async function migrate_v1(db: Database): Promise<void> {
       preferred_contract_id   TEXT,
       is_active               INTEGER NOT NULL DEFAULT 1,
       is_deleted              INTEGER NOT NULL DEFAULT 0,
-      -- Pending = created offline, not yet pushed
       sync_status             TEXT NOT NULL DEFAULT 'synced',
       sync_version            INTEGER NOT NULL DEFAULT 1,
       synced_at               TEXT,
@@ -153,7 +159,7 @@ async function migrate_v1(db: Database): Promise<void> {
     )
   `);
 
-  // ── Branch-level tables (read/write locally, pushed to server) ────────
+  // ── Branch-level tables (read/write locally, pushed to server) ──
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS branch_inventory (
@@ -199,45 +205,63 @@ async function migrate_v1(db: Database): Promise<void> {
       id                            TEXT PRIMARY KEY,
       organization_id               TEXT NOT NULL,
       branch_id                     TEXT NOT NULL,
-      sale_number                   TEXT NOT NULL,
+      sale_number                   TEXT NOT NULL UNIQUE,
       customer_id                   TEXT,
       customer_name                 TEXT,
+
+      -- Financials — aligned to rewritten Sale model (single discount_amount)
       subtotal                      REAL NOT NULL,
-      contract_discount_amount      REAL NOT NULL DEFAULT 0,
-      additional_discount_amount    REAL NOT NULL DEFAULT 0,
-      total_discount_amount         REAL NOT NULL DEFAULT 0,
+      discount_amount               REAL NOT NULL DEFAULT 0,
       tax_amount                    REAL NOT NULL DEFAULT 0,
       total_amount                  REAL NOT NULL,
+
+      -- Contract snapshot
       price_contract_id             TEXT,
       contract_name                 TEXT,
-      contract_type                 TEXT,
       contract_discount_percentage  REAL,
+
+      -- Payment
       payment_method                TEXT NOT NULL DEFAULT 'cash',
       payment_status                TEXT NOT NULL DEFAULT 'completed',
       amount_paid                   REAL,
       change_amount                 REAL NOT NULL DEFAULT 0,
       payment_reference             TEXT,
+
+      -- Prescription
       prescription_id               TEXT,
-      notes                         TEXT,
+      prescription_number           TEXT,
+      prescriber_name               TEXT,
+
+      -- Staff
       cashier_id                    TEXT NOT NULL,
-      cashier_name                  TEXT,
       pharmacist_id                 TEXT,
-      pharmacist_name               TEXT,
-      manager_approval_user_id      TEXT,
+
+      -- Insurance
       insurance_claim_number        TEXT,
-      insurance_preauth_number      TEXT,
       patient_copay_amount          REAL,
       insurance_covered_amount      REAL,
       insurance_verified            INTEGER NOT NULL DEFAULT 0,
       insurance_verified_at         TEXT,
       insurance_verified_by         TEXT,
+
+      -- Status and audit
+      notes                         TEXT,
       status                        TEXT NOT NULL DEFAULT 'completed',
       cancelled_at                  TEXT,
       cancelled_by                  TEXT,
       cancellation_reason           TEXT,
       refund_amount                 REAL,
       refunded_at                   TEXT,
-      refunded_by                   TEXT,
+
+      -- Receipt
+      receipt_printed               INTEGER NOT NULL DEFAULT 0,
+      receipt_emailed               INTEGER NOT NULL DEFAULT 0,
+
+      -- Local-only: sale items stored as JSON for offline receipt display.
+      -- Not returned by the server pull — written only by localWrite.sale.
+      items_json                    TEXT DEFAULT '[]',
+
+      -- Sync
       sync_status                   TEXT NOT NULL DEFAULT 'pending',
       sync_version                  INTEGER NOT NULL DEFAULT 1,
       synced_at                     TEXT,
@@ -273,7 +297,7 @@ async function migrate_v1(db: Database): Promise<void> {
     )
   `);
 
-  // ── Sync queue — tracks pending push operations ───────────────────
+  // ── Sync queue — tracks pending push operations ──
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS sync_queue (
@@ -291,7 +315,7 @@ async function migrate_v1(db: Database): Promise<void> {
     )
   `);
 
-  // ── Sync metadata ─────────────────────────────────────────────────
+  // ── Sync metadata ──
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS sync_meta (
@@ -300,7 +324,7 @@ async function migrate_v1(db: Database): Promise<void> {
     )
   `);
 
-  // ── Indexes ───────────────────────────────────────────────────────
+  // ── Indexes ──
 
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_drugs_org      ON drugs(organization_id)`);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_drugs_active   ON drugs(is_active)`);
@@ -318,51 +342,65 @@ async function migrate_v1(db: Database): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MIGRATION V2 — expand sales table to match server SaleResponse
-// Runs once on existing installs that have the old narrower schema.
+// MIGRATION V2 — upgrade from old v1 schema
+//
+// Old v1 (pre-rewrite) had the three phantom discount fields and was missing
+// the six real Sale model columns below.  This migration adds the missing
+// real columns for existing installs.
+//
+// All ADD COLUMN calls are wrapped in try/catch so they are safe to run on
+// both old and new installs (fresh installs already have these columns from
+// the corrected v1 above; the errors are silently swallowed).
+//
+// Phantom columns from old v1 (contract_discount_amount, cashier_name, etc.)
+// cannot be dropped in SQLite < 3.35 without a full table rebuild, so they
+// are left in place on old installs but never written to.
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function migrate_v2(db: Database): Promise<void> {
-  // SQLite only supports ADD COLUMN — we add every missing column individually.
-  // If a column already exists (fresh install that ran migrate_v1 with the new
-  // schema) SQLite will error; we ignore those errors so the migration is safe
-  // to run on both old and new installs.
+  const addColumn = async (col: string) => {
+    try { await db.execute(`ALTER TABLE sales ADD COLUMN ${col}`); }
+    catch { /* column already exists on fresh installs — safe to ignore */ }
+  };
+
+  // The single discount field that replaced the three phantom fields
+  await addColumn("discount_amount               REAL NOT NULL DEFAULT 0");
+
+  // Prescription snapshot fields
+  await addColumn("prescription_number           TEXT");
+  await addColumn("prescriber_name               TEXT");
+
+  // Receipt tracking
+  await addColumn("receipt_printed               INTEGER NOT NULL DEFAULT 0");
+  await addColumn("receipt_emailed               INTEGER NOT NULL DEFAULT 0");
+
+  await db.execute("PRAGMA user_version = 2");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MIGRATION V3 — upgrade from old v2 schema
+//
+// Installs that already ran the old v2 (user_version = 2) never received the
+// six real columns above (old v2 only added phantom fields).  This migration
+// adds the same columns for those installs.
+//
+// Fresh installs and installs that ran new v2 already have all columns;
+// the try/catch silently ignores the "column already exists" errors.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function migrate_v3(db: Database): Promise<void> {
   const addColumn = async (col: string) => {
     try { await db.execute(`ALTER TABLE sales ADD COLUMN ${col}`); }
     catch { /* already exists — safe to ignore */ }
   };
 
-  await addColumn("contract_discount_amount      REAL NOT NULL DEFAULT 0");
-  await addColumn("additional_discount_amount    REAL NOT NULL DEFAULT 0");
-  await addColumn("total_discount_amount         REAL NOT NULL DEFAULT 0");
-  await addColumn("contract_name                 TEXT");
-  await addColumn("contract_type                 TEXT");
-  await addColumn("contract_discount_percentage  REAL");
-  await addColumn("payment_reference             TEXT");
-  await addColumn("prescription_id               TEXT");
-  await addColumn("cashier_name                  TEXT");
-  await addColumn("pharmacist_id                 TEXT");
-  await addColumn("pharmacist_name               TEXT");
-  await addColumn("manager_approval_user_id      TEXT");
-  await addColumn("insurance_claim_number        TEXT");
-  await addColumn("insurance_preauth_number      TEXT");
-  await addColumn("patient_copay_amount          REAL");
-  await addColumn("insurance_covered_amount      REAL");
-  await addColumn("insurance_verified_at         TEXT");
-  await addColumn("insurance_verified_by         TEXT");
-  await addColumn("cancelled_at                  TEXT");
-  await addColumn("cancelled_by                  TEXT");
-  await addColumn("cancellation_reason           TEXT");
-  await addColumn("refund_amount                 REAL");
-  await addColumn("refunded_at                   TEXT");
-  await addColumn("refunded_by                   TEXT");
+  await addColumn("discount_amount               REAL NOT NULL DEFAULT 0");
+  await addColumn("prescription_number           TEXT");
+  await addColumn("prescriber_name               TEXT");
+  await addColumn("receipt_printed               INTEGER NOT NULL DEFAULT 0");
+  await addColumn("receipt_emailed               INTEGER NOT NULL DEFAULT 0");
 
-  // items_json is no longer used — sale items come via SaleWithDetails endpoint,
-  // not through the sync pull. Drop the NOT NULL constraint by recreating would
-  // require a full table rebuild; instead just leave any existing column in place
-  // and stop writing to it. The upsert column list no longer includes it.
-
-  await db.execute("PRAGMA user_version = 2");
+  await db.execute("PRAGMA user_version = 3");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

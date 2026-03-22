@@ -7,7 +7,8 @@
  */
 
 import { useState, useEffect } from "react";
-import { syncEngine, type SyncStatus, type PushConflict } from "@/lib/syncEngine";
+import { syncEngine } from "@/lib/syncEngine";
+import type { SyncStatus, PushConflict } from "@/types";
 
 export interface SyncState {
     status: SyncStatus;

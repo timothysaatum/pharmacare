@@ -43,7 +43,6 @@ async function upsertAndEnqueue<T extends Record<string, unknown>>(
         created_at: record.created_at ?? now,
     };
 
-    // Build dynamic upsert
     const cols = Object.keys(payload);
     const vals = cols.map((c) => {
         const v = payload[c];
@@ -52,11 +51,14 @@ async function upsertAndEnqueue<T extends Record<string, unknown>>(
         return v ?? null;
     });
     const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
-    const updates = cols.filter((c) => c !== "id").map((c) => `${c} = excluded.${c}`).join(", ");
+    const updates = cols
+        .filter((c) => c !== "id")
+        .map((c) => `${c} = excluded.${c}`)
+        .join(", ");
 
     await db.execute(
         `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders})
-     ON CONFLICT(id) DO UPDATE SET ${updates}`,
+         ON CONFLICT(id) DO UPDATE SET ${updates}`,
         vals
     );
 
@@ -70,26 +72,44 @@ async function upsertAndEnqueue<T extends Record<string, unknown>>(
 export const writeLocal = {
     /**
      * Record a completed sale locally.
-     * The sale is written with sync_status='pending' and queued for push.
+     *
+     * FIX: `items` (SaleItem[]) is destructured out before the spread —
+     * there is no `items` column in SQLite.  The array is serialised as
+     * `items_json` (TEXT) so offline receipt rendering can read it back
+     * without hitting the server.
      */
-    sale: async (sale: Omit<Sale, "sync_status" | "sync_version"> & { id: string }) => {
+    sale: async (
+        sale: Omit<Sale, "sync_status" | "sync_version"> & { id: string }
+    ): Promise<void> => {
+        const { items, ...saleData } = sale;
         const payload = {
-            ...sale,
-            items_json: JSON.stringify(sale.items ?? []),
+            ...saleData,
+            items_json: JSON.stringify(items ?? []),
         };
         await upsertAndEnqueue("sales", payload as Record<string, unknown>, "create");
     },
 
     /**
      * Add a new drug batch (received stock).
+     *
+     * FIX: client-computed convenience fields (`days_until_expiry`,
+     * `is_expired`, `is_expiring_soon`) are destructured out — they have
+     * no SQLite columns and are derived at read time.
      */
-    drugBatch: async (batch: Omit<DrugBatch, "sync_status" | "sync_version"> & { id: string }) => {
-        await upsertAndEnqueue("drug_batches", batch as Record<string, unknown>, "create");
+    drugBatch: async (
+        batch: Omit<DrugBatch, "sync_status" | "sync_version"> & { id: string }
+    ): Promise<void> => {
+        const { days_until_expiry, is_expired, is_expiring_soon, ...batchData } = batch;
+        await upsertAndEnqueue(
+            "drug_batches",
+            batchData as Record<string, unknown>,
+            "create"
+        );
     },
 
     /**
-     * Update branch inventory quantity directly.
-     * Use after a local sale or adjustment to keep the local count accurate.
+     * Update branch inventory quantity.
+     * Call after a local sale or adjustment to keep the local count accurate.
      */
     inventory: async (
         branchId: string,
@@ -99,18 +119,17 @@ export const writeLocal = {
         const db = await getDb();
         const now = new Date().toISOString();
 
-        // Try to update existing row first
         const result = await db.execute(
             `UPDATE branch_inventory
-       SET quantity     = MAX(0, quantity + $1),
-           sync_status  = 'pending',
-           updated_at   = $2
-       WHERE branch_id = $3 AND drug_id = $4`,
+             SET quantity    = MAX(0, quantity + $1),
+                 sync_status = 'pending',
+                 updated_at  = $2
+             WHERE branch_id = $3 AND drug_id = $4`,
             [quantityDelta, now, branchId, drugId]
         );
 
         if (result.rowsAffected === 0) {
-            // No row yet — create one with starting quantity = max(0, delta)
+            // No row yet — create one
             const id = crypto.randomUUID();
             await upsertAndEnqueue("branch_inventory", {
                 id,
@@ -143,18 +162,35 @@ export const writeLocal = {
 
     /**
      * Record a stock adjustment locally.
+     *
+     * FIX: the `stock_adjustments` table does not exist in the local SQLite
+     * schema (StockAdjustment has no SyncTrackingMixin on the server and is
+     * write-once/immutable).  We skip the local table INSERT and go straight
+     * to the sync queue — the server becomes the source of truth on next push.
+     *
+     * The local inventory count is still decremented immediately so the POS
+     * reflects the correct stock without waiting for a sync cycle.
      */
     stockAdjustment: async (
         adjustment: StockAdjustmentCreate & { id: string; adjusted_by: string }
-    ) => {
+    ): Promise<void> => {
         const now = new Date().toISOString();
-        await upsertAndEnqueue("stock_adjustments", {
+        const payload = {
             ...adjustment,
             updated_at: now,
             created_at: now,
-        }, "create");
+        };
 
-        // Also update local inventory count
+        // Push-only: write directly to the queue, bypass local table INSERT
+        await enqueue(
+            "stock_adjustments",
+            adjustment.id,
+            "create",
+            1,
+            payload as Record<string, unknown>
+        );
+
+        // Reflect the stock change locally so the POS is immediately accurate
         await writeLocal.inventory(
             adjustment.branch_id,
             adjustment.drug_id,
@@ -164,30 +200,59 @@ export const writeLocal = {
 
     /**
      * Create or update a purchase order locally.
+     *
+     * FIX: `items` (PurchaseOrderItem[]) is destructured out — there is no
+     * `items` column in SQLite.  The array is serialised as `items_json`.
      */
     purchaseOrder: async (
         po: Omit<PurchaseOrder, "sync_status" | "sync_version"> & { id: string },
         operation: "create" | "update" = "create"
-    ) => {
+    ): Promise<void> => {
+        const { items, ...poData } = po;
         const payload = {
-            ...po,
-            items_json: JSON.stringify(po.items ?? []),
+            ...poData,
+            items_json: JSON.stringify(items ?? []),
         };
-        await upsertAndEnqueue("purchase_orders", payload as Record<string, unknown>, operation);
+        await upsertAndEnqueue(
+            "purchase_orders",
+            payload as Record<string, unknown>,
+            operation
+        );
     },
 
     /**
      * Create a customer locally (org-level but created offline at branch).
      * Will be deduped by phone/email on the server when pushed.
+     *
+     * FIX: several Customer fields have no SQLite columns and are destructured
+     * out before the spread:
+     *   - allergies, chronic_conditions, preferred_contact_method,
+     *     marketing_consent, insurance_card_image_url, address
+     *     → not in the local customer schema (omitted to keep it lightweight)
+     *   - deleted_at, deleted_by
+     *     → SoftDeleteFields present on the type but not in the SQLite schema
      */
     customer: async (
         customer: Omit<Customer, "sync_status" | "sync_version"> & { id: string }
-    ) => {
+    ): Promise<void> => {
         const now = new Date().toISOString();
+
+        const {
+            allergies,
+            chronic_conditions,
+            preferred_contact_method,
+            marketing_consent,
+            insurance_card_image_url,
+            address,
+            deleted_at,
+            deleted_by,
+            ...customerData
+        } = customer;
+
         await upsertAndEnqueue("customers", {
-            ...customer,
+            ...customerData,
             updated_at: now,
-            created_at: now,
+            created_at: customerData.created_at ?? now,
         }, "create");
     },
 };

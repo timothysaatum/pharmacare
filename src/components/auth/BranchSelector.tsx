@@ -24,8 +24,13 @@ export function BranchSelector({ user, branches, onSelect }: BranchSelectorProps
     const handleConfirm = async () => {
         if (!selected) return;
         setConfirming(true);
-        setActiveBranch(selected);
-        onSelect(selected);
+        try {
+            setActiveBranch(selected);
+            onSelect(selected);
+        } finally {
+            // Reset in case onSelect does not navigate away (e.g. error boundary)
+            setConfirming(false);
+        }
     };
 
     return (

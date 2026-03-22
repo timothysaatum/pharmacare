@@ -1,18 +1,31 @@
 import { get, post, patch, del } from "./client";
 import type {
-    Drug, DrugCreate, DrugUpdate, DrugWithInventory,
-    DrugCategory, DrugCategoryCreate, DrugCategoryUpdate,
-    DrugSearchFilters, BulkDrugUpdate, PaginatedResponse,
+    Drug,
+    DrugCreate,
+    DrugUpdate,
+    DrugWithInventory,
+    DrugCategory,
+    DrugCategoryCreate,
+    DrugCategoryUpdate,
+    DrugCategoryTree,
+    DrugSearchFilters,
+    BulkDrugUpdate,
+    BulkDrugUpdateResult,
+    PaginatedResponse,
 } from "@/types";
 
 const BASE = "/drugs";
 
 export const drugApi = {
-    // ── Drug CRUD ───────────────────────────────────────────
+    // ── Drug CRUD ─────────────────────────────────────────────────────────────
 
-    /** GET /drugs — paginated, filterable. Pass an AbortSignal to cancel on unmount. */
+    /**
+     * GET /drugs
+     * Paginated, filterable drug list.
+     * Pass an AbortSignal to cancel on component unmount.
+     */
     list(
-        params: DrugSearchFilters & { page?: number; page_size?: number; is_active?: boolean } = {},
+        params: DrugSearchFilters & { page?: number; page_size?: number } = {},
         signal?: AbortSignal
     ): Promise<PaginatedResponse<Drug>> {
         const qs = new URLSearchParams();
@@ -27,8 +40,16 @@ export const drugApi = {
         return get<Drug>(`${BASE}/${id}`, { signal });
     },
 
-    /** GET /drugs/{id}/with-inventory?branch_id= */
-    getWithInventory(id: string, branchId?: string, signal?: AbortSignal): Promise<DrugWithInventory> {
+    /**
+     * GET /drugs/{id}/with-inventory
+     * Returns the drug with aggregated inventory summary across branches.
+     * Optionally scoped to a specific branch via `branch_id` query param.
+     */
+    getWithInventory(
+        id: string,
+        branchId?: string,
+        signal?: AbortSignal
+    ): Promise<DrugWithInventory> {
         const qs = branchId ? `?branch_id=${branchId}` : "";
         return get<DrugWithInventory>(`${BASE}/${id}/with-inventory${qs}`, { signal });
     },
@@ -48,17 +69,54 @@ export const drugApi = {
         return del<void>(`${BASE}/${id}?hard_delete=${hardDelete}`);
     },
 
-    /** POST /drugs/bulk-update — up to 100 drugs */
-    bulkUpdate(data: BulkDrugUpdate): Promise<{ updated_count: number }> {
-        return post<{ updated_count: number }>(`${BASE}/bulk-update`, data);
+    /**
+     * POST /drugs/bulk-update
+     * Updates all listed drugs or reports failures.
+     * Returns { successful, failed, total, message } per the router.
+     */
+    bulkUpdate(data: BulkDrugUpdate): Promise<BulkDrugUpdateResult> {
+        return post<BulkDrugUpdateResult>(`${BASE}/bulk-update`, data);
     },
 
-    // ── Categories ───────────────────────────────────────────
+    /**
+     * POST /drugs/search
+     * Advanced search via POST body for complex filter combinations.
+     * Use `list()` for simple query-parameter searches.
+     */
+    searchAdvanced(
+        filters: DrugSearchFilters,
+        params: { page?: number; page_size?: number } = {}    ): Promise<PaginatedResponse<Drug>> {
+        const qs = new URLSearchParams();
+        Object.entries(params).forEach(([k, v]) => {
+            if (v !== undefined && v !== null) qs.set(k, String(v));
+        });
+        const url = qs.toString() ? `${BASE}/search?${qs}` : `${BASE}/search`;
+        return post<PaginatedResponse<Drug>>(url, filters);
+    },
 
-    /** GET /drugs/categories */
-    listCategories(parentId?: string): Promise<DrugCategory[]> {
+    // ── Categories ────────────────────────────────────────────────────────────
+
+    /**
+     * GET /drugs/categories
+     * Returns a flat list of DrugCategory objects.
+     * Pass `parentId` to get direct children of a specific parent
+     * (null / omitted = root categories).
+     *
+     * NOTE: this endpoint returns a flat list, not a nested tree.
+     * Use `listCategoriesTree()` for the nested structure.
+     */
+    listCategories(parentId?: string, signal?: AbortSignal): Promise<DrugCategory[]> {
         const qs = parentId ? `?parent_id=${parentId}` : "";
-        return get<DrugCategory[]>(`${BASE}/categories${qs}`);
+        return get<DrugCategory[]>(`${BASE}/categories${qs}`, { signal });
+    },
+
+    /**
+     * GET /drugs/categories/tree
+     * Returns a hierarchical tree of DrugCategoryTree nodes, each
+     * with a nested `children` array.  Use for category picker UIs.
+     */
+    listCategoriesTree(signal?: AbortSignal): Promise<DrugCategoryTree[]> {
+        return get<DrugCategoryTree[]>(`${BASE}/categories/tree`, { signal });
     },
 
     /** POST /drugs/categories */

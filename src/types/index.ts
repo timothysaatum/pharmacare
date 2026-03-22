@@ -7,6 +7,15 @@ export interface TimestampFields {
     updated_at: string;
 }
 
+/**
+ * Sync tracking fields as they appear on the CLIENT side.
+ *
+ * Note on naming: the local SQLite schema intentionally uses `synced_at`
+ * (not `last_synced_at`).  The server model uses `last_synced_at` but that
+ * field name is an internal concern — the sync engine maps it to the local
+ * column during upsert.  Components always read from the local layer so
+ * `synced_at` is the correct name here.
+ */
 export interface SyncFields {
     sync_status: "synced" | "pending" | "conflict" | "deleted";
     sync_version: number;
@@ -84,6 +93,20 @@ export interface UserCreate {
     employee_id?: string;
     organization_id?: string;
     assigned_branches?: string[];
+}
+
+/**
+ * Admin account created during onboarding.
+ * Omits `organization_id` — the org doesn't exist yet at that point.
+ */
+export interface AdminCreate {
+    username: string;
+    email: string;
+    full_name: string;
+    password: string;
+    role: "admin";
+    phone?: string;
+    employee_id?: string;
 }
 
 export interface UserUpdate {
@@ -188,8 +211,8 @@ export interface OnboardingRequest {
     currency: string;
     timezone: string;
     additional_settings?: Record<string, unknown>;
-    // Admin user
-    admin: UserCreate;
+    // Admin — uses AdminCreate (no organization_id) instead of UserCreate
+    admin: AdminCreate;
     // Branches (optional, max 10)
     branches?: BranchCreate[];
 }
@@ -348,13 +371,16 @@ export interface Drug extends TimestampFields, SyncFields, SoftDeleteFields {
     ndc_code: string | null;
     requires_prescription: boolean;
     controlled_substance_schedule: string | null;
-    unit_price: number | string;
-    cost_price: number | string | null;
-    markup_percentage: number | string | null;
-    tax_rate: number | string;
-    reorder_level: number | string;
-    reorder_quantity: number | string;
-    max_stock_level: number | string | null;
+    // FIX: numeric fields are always numbers from the API (Pydantic serialises
+    // Numeric columns as JSON numbers, never strings). The old `number | string`
+    // unions forced every consumer to guard before arithmetic.
+    unit_price: number;
+    cost_price: number | null;
+    markup_percentage: number | null;
+    tax_rate: number;
+    reorder_level: number;
+    reorder_quantity: number;
+    max_stock_level: number | null;
     unit_of_measure: string;
     description: string | null;
     usage_instructions: string | null;
@@ -457,6 +483,18 @@ export interface BulkDrugUpdate {
     updates: DrugUpdate;
 }
 
+/**
+ * Response from the bulk-update endpoint.
+ * Shape matches the router response exactly:
+ *   { successful, failed, total, message }
+ */
+export interface BulkDrugUpdateResult {
+    successful: number;
+    failed: number;
+    total: number;
+    message: string;
+}
+
 // ============================================================
 // INVENTORY TYPES
 // ============================================================
@@ -476,7 +514,12 @@ export interface BranchInventoryWithDetails extends BranchInventory {
     drug_unit_price: number;
     branch_name: string;
     branch_code: string;
-    available_quantity: number;
+    /**
+     * Client-computed convenience field: `quantity - reserved_quantity`.
+     * The server does not return this; compute it where needed:
+     *   const available = inv.available_quantity ?? (inv.quantity - inv.reserved_quantity);
+     */
+    available_quantity?: number;
 }
 
 export interface DrugBatch extends TimestampFields, SyncFields {
@@ -492,9 +535,15 @@ export interface DrugBatch extends TimestampFields, SyncFields {
     selling_price: number | null;
     supplier: string | null;
     purchase_order_id: string | null;
-    days_until_expiry: number;
-    is_expired: boolean;
-    is_expiring_soon: boolean;
+    /**
+     * Client-computed: `(new Date(expiry_date).getTime() - Date.now()) / 86_400_000 | 0`
+     * Not stored in SQLite or returned by the server.
+     */
+    days_until_expiry?: number;
+    /** Client-computed: `new Date(expiry_date) < new Date()` */
+    is_expired?: boolean;
+    /** Client-computed: `days_until_expiry !== undefined && days_until_expiry <= 90` */
+    is_expiring_soon?: boolean;
 }
 
 export interface DrugBatchWithDetails extends DrugBatch {
@@ -510,7 +559,9 @@ export interface DrugBatchCreate {
     purchase_order_id?: string;
     batch_number: string;
     quantity: number;
-    remaining_quantity: number;
+    // FIX: remaining_quantity removed — the server always sets it equal to
+    // quantity on creation.  Exposing it here let callers pass a different
+    // value, which would immediately corrupt the batch's inventory count.
     manufacturing_date?: string;
     expiry_date: string;
     cost_price?: number;
@@ -521,10 +572,30 @@ export interface DrugBatchCreate {
 export interface StockAdjustmentCreate {
     branch_id: string;
     drug_id: string;
-    adjustment_type: "damage" | "expired" | "theft" | "return" | "correction" | "transfer" | "sale";
+    /**
+     * FIX: "sale" removed — the backend's CheckConstraint does not include it.
+     * Sale-driven deductions use "correction" (handled internally by SalesService,
+     * not by a separate client-initiated adjustment call).
+     */
+    adjustment_type: "damage" | "expired" | "theft" | "return" | "correction" | "transfer";
     quantity_change: number;
     reason?: string;
     transfer_to_branch_id?: string;
+}
+
+export interface StockAdjustmentResponse {
+    id: string;
+    branch_id: string;
+    drug_id: string;
+    adjustment_type: string;
+    quantity_change: number;
+    previous_quantity: number;
+    new_quantity: number;
+    reason: string | null;
+    // FIX: was `created_by` — the model column is `adjusted_by`
+    adjusted_by: string;
+    transfer_to_branch_id: string | null;
+    created_at: string;
 }
 
 export interface LowStockItem {
@@ -552,6 +623,36 @@ export interface ExpiringBatchItem {
     days_until_expiry: number;
     cost_value: number;
     selling_value: number;
+}
+
+// ============================================================
+// INVENTORY VALUATION TYPES
+// (previously missing — getValuation() returned Promise<unknown>)
+// ============================================================
+
+export interface InventoryValuationItem {
+    drug_id: string;
+    drug_name: string;
+    sku: string | null;
+    quantity: number;
+    cost_price: number;
+    selling_price: number;
+    total_cost_value: number;
+    total_selling_value: number;
+    potential_profit: number;
+}
+
+export interface InventoryValuationResponse {
+    branch_id: string;
+    branch_name: string;
+    valuation_date: string;
+    items: InventoryValuationItem[];
+    total_items: number;
+    total_quantity: number;
+    total_cost_value: number;
+    total_selling_value: number;
+    total_potential_profit: number;
+    profit_margin_percentage: number;
 }
 
 // ============================================================
@@ -588,7 +689,14 @@ export interface Customer extends TimestampFields, SyncFields, SoftDeleteFields 
 // PRICING / CONTRACT TYPES
 // ============================================================
 
-export type ContractType = "insurance" | "corporate" | "staff" | "senior_citizen" | "standard" | "wholesale";
+export type ContractType =
+    | "insurance"
+    | "corporate"
+    | "staff"
+    | "senior_citizen"
+    | "standard"
+    | "wholesale";
+
 export type ContractStatus = "draft" | "active" | "suspended" | "expired" | "cancelled";
 export type DiscountType = "percentage" | "fixed_amount" | "custom";
 
@@ -624,6 +732,25 @@ export interface PriceContract extends TimestampFields, SyncFields, SoftDeleteFi
     total_transactions: number;
     total_discount_given: number;
     last_used_at: string | null;
+    created_by: string;
+    approved_by: string | null;
+    approved_at: string | null;
+}
+
+/**
+ * Per-drug pricing override within a contract.
+ * Corresponds to the PriceContractItem model.
+ */
+export interface PriceContractItem {
+    id: string;
+    contract_id: string;
+    drug_id: string;
+    override_discount_percentage: number | null;
+    fixed_price: number | null;
+    is_excluded: boolean;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
 }
 
 export interface InsuranceProvider extends TimestampFields, SyncFields, SoftDeleteFields {
@@ -697,6 +824,8 @@ export interface Sale extends TimestampFields, SyncFields {
     patient_copay_amount: number | null;
     insurance_covered_amount: number | null;
     insurance_verified: boolean;
+    insurance_verified_at: string | null;
+    insurance_verified_by: string | null;
     notes: string | null;
     status: SaleStatus;
     receipt_printed: boolean;
@@ -746,7 +875,13 @@ export interface Prescription extends TimestampFields, SyncFields {
 // SUPPLIER / PURCHASE ORDER TYPES
 // ============================================================
 
-export type PurchaseOrderStatus = "draft" | "pending" | "approved" | "ordered" | "received" | "cancelled";
+export type PurchaseOrderStatus =
+    | "draft"
+    | "pending"
+    | "approved"
+    | "ordered"
+    | "received"
+    | "cancelled";
 
 export interface Supplier extends TimestampFields, SyncFields, SoftDeleteFields {
     id: string;
@@ -801,7 +936,14 @@ export interface PurchaseOrder extends TimestampFields, SyncFields {
 // SYSTEM / AUDIT TYPES
 // ============================================================
 
-export type AlertType = "low_stock" | "expiry_warning" | "out_of_stock" | "system_error" | "security" | "system_info";
+export type AlertType =
+    | "low_stock"
+    | "expiry_warning"
+    | "out_of_stock"
+    | "system_error"
+    | "security"
+    | "system_info";
+
 export type AlertSeverity = "low" | "medium" | "high" | "critical";
 
 export interface SystemAlert {
@@ -868,7 +1010,82 @@ export interface ExpiringBatch {
 }
 
 // ============================================================
-// SYNC TYPES
+// SYNC WIRE TYPES
+//
+// These are the exact shapes sent over the network between the
+// client and the FastAPI sync endpoints.  They live here (not in
+// syncEngine.ts) so any module can import them without pulling in
+// the engine singleton.
+// ============================================================
+
+export interface PullRequest {
+    branch_id: string;
+    last_sync_at: string | null;
+    tables?: string[];
+}
+
+export interface PullResponse {
+    drugs: Drug[];
+    drug_categories: DrugCategory[];
+    price_contracts: PriceContract[];
+    customers: Customer[];
+    branch_inventory: BranchInventory[];
+    drug_batches: DrugBatch[];
+    sales: Sale[];
+    purchase_orders: PurchaseOrder[];
+    sync_timestamp: string;
+    has_more: boolean;
+    total_records: number;
+}
+
+export interface PushRecord {
+    table_name: string;
+    local_id: string;
+    operation: "create" | "update" | "delete";
+    sync_version: number;
+    data: Record<string, unknown>;
+    created_offline_at: string;
+}
+
+export interface PushRequest {
+    branch_id: string;
+    records: PushRecord[];
+}
+
+export interface PushResult {
+    local_id: string;
+    table_name: string;
+    server_id?: string;
+    success: boolean;
+    error?: string;
+}
+
+export interface PushConflict {
+    local_id: string;
+    table_name: string;
+    local_version: number;
+    server_version: number;
+    server_record: Record<string, unknown>;
+    resolution: "server_wins" | "local_wins" | "manual_required";
+}
+
+export interface PushResponse {
+    accepted: PushResult[];
+    conflicts: PushConflict[];
+    failed: PushResult[];
+    total_received: number;
+    total_accepted: number;
+    total_conflicts: number;
+    total_failed: number;
+    sync_timestamp: string;
+    next_pull_timestamp: string;
+}
+
+export type SyncStatus = "idle" | "syncing" | "error" | "offline";
+
+// ============================================================
+// LEGACY SYNC OPERATION TYPES
+// (used for local queue tracking, not wire protocol)
 // ============================================================
 
 export interface SyncOperation {
