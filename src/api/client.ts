@@ -1,7 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { authStorage } from "@/lib/storage";
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:9000";
+const BASE_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
 
 export const apiClient = axios.create({
     baseURL: `${BASE_URL}/api/v1`,
