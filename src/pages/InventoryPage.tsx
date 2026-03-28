@@ -42,6 +42,11 @@ export default function InventoryPage() {
     const [addBatchError, setAddBatchError] = useState<string | null>(null);
     const [addBatchLoading, setAddBatchLoading] = useState(false);
 
+    // FIX: drugMap caches reorder_level (and other drug fields) keyed by drug_id
+    // so stockStatusBadge can use the real per-drug threshold instead of a
+    // hardcoded value. Populated lazily from inventory rows.
+    const [drugMap, setDrugMap] = useState<Map<string, Drug>>(new Map());
+
     // AbortController for inventory fetch
     const abortRef = useRef<AbortController | null>(null);
 
@@ -72,6 +77,29 @@ export default function InventoryPage() {
                 setInventory(result.items);
                 setTotalPages(result.total_pages);
                 setTotal(result.total);
+
+                // FIX: fetch drug details for every unique drug_id in the result
+                // so we have reorder_level available for stockStatusBadge.
+                // We only fetch drugs we don't already have in the map.
+                const unknownIds = [
+                    ...new Set(result.items.map((i) => i.drug_id)),
+                ].filter((id) => !drugMap.has(id));
+
+                if (unknownIds.length > 0) {
+                    Promise.allSettled(
+                        unknownIds.map((id) => drugApi.getById(id))
+                    ).then((results) => {
+                        setDrugMap((prev) => {
+                            const next = new Map(prev);
+                            results.forEach((r, idx) => {
+                                if (r.status === "fulfilled") {
+                                    next.set(unknownIds[idx], r.value);
+                                }
+                            });
+                            return next;
+                        });
+                    });
+                }
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === "AbortError") return;
@@ -147,11 +175,15 @@ export default function InventoryPage() {
         appEvents.emit("inventory:changed"); // refreshes this page + DrugListPage low stock
     };
 
-    const stockStatusBadge = (item: BranchInventoryWithDetails) => {
-        const avail = item.quantity - item.reserved_quantity;
+    // FIX: accepts reorder_level so the badge reflects the drug's actual
+    // threshold rather than a hardcoded value of 10. Also uses the server's
+    // computed available_quantity when present, falling back to the local
+    // calculation so both online and offline cases are correct.
+    const stockStatusBadge = (item: BranchInventoryWithDetails, reorderLevel: number) => {
+        const avail = item.available_quantity ?? (item.quantity - item.reserved_quantity);
         if (avail === 0)
             return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-600">Out of stock</span>;
-        if (avail <= 10)
+        if (avail <= reorderLevel)
             return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">Low</span>;
         return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-600">In stock</span>;
     };
@@ -292,7 +324,11 @@ export default function InventoryPage() {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 bg-white">
                                     {inventory.map((item) => {
-                                        const available = item.quantity - item.reserved_quantity;
+                                        const drug = drugMap.get(item.drug_id);
+                                        const reorderLevel = drug?.reorder_level ?? 10;
+                                        // FIX: prefer server-computed available_quantity,
+                                        // fall back to local calc for offline correctness
+                                        const available = item.available_quantity ?? (item.quantity - item.reserved_quantity);
                                         const value = available * item.drug_unit_price;
                                         return (
                                             <tr key={item.id} className="hover:bg-slate-50/70 transition-colors group">
@@ -305,14 +341,14 @@ export default function InventoryPage() {
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
-                                                    <span className={`font-bold ${available === 0 ? "text-red-600" : available <= 10 ? "text-amber-600" : "text-ink"}`}>
+                                                    <span className={`font-bold ${available === 0 ? "text-red-600" : available <= reorderLevel ? "text-amber-600" : "text-ink"}`}>
                                                         {available.toLocaleString()}
                                                     </span>
                                                 </td>
                                                 <td className="px-4 py-3 text-center text-ink-secondary">{item.reserved_quantity}</td>
                                                 <td className="px-4 py-3 text-center text-ink-secondary">{item.quantity.toLocaleString()}</td>
                                                 <td className="px-4 py-3 text-ink-muted text-xs">{item.location ?? "—"}</td>
-                                                <td className="px-4 py-3 text-center">{stockStatusBadge(item)}</td>
+                                                <td className="px-4 py-3 text-center">{stockStatusBadge(item, reorderLevel)}</td>
                                                 <td className="px-6 py-3 text-right">
                                                     <span className="font-medium text-ink">₵{value.toFixed(2)}</span>
                                                 </td>
@@ -433,9 +469,12 @@ export default function InventoryPage() {
                                             })}
                                         </td>
                                         <td className="px-4 py-3 text-center">
+                                            {/* FIX: color order was semantically backwards.
+                                                ≤30 days = critical (red), ≤60 = warning (amber),
+                                                >60 = approaching but manageable (green). */}
                                             <span className={`font-bold text-sm ${item.days_until_expiry <= 30 ? "text-red-600"
-                                                : item.days_until_expiry <= 60 ? "text-amber-600"
-                                                    : "text-orange-600"
+                                                    : item.days_until_expiry <= 60 ? "text-amber-600"
+                                                        : "text-green-600"
                                                 }`}>
                                                 {item.days_until_expiry}d
                                             </span>

@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { CheckCircle2, ArrowRight, Copy, Check } from "lucide-react";
+import { CheckCircle2, ArrowRight, Copy, Check, MapPin } from "lucide-react";
 import { useState } from "react";
 import type { OnboardingResponse } from "@/types";
 import { Badge, Button } from "../ui";
@@ -54,16 +54,35 @@ export function SuccessScreen({ result, onGoToLogin }: SuccessScreenProps) {
 
             {/* Summary pills */}
             <div className="flex flex-wrap gap-2 justify-center">
-                <Badge variant="success">
-                    ✓ Organization created
-                </Badge>
-                <Badge variant="success">
-                    ✓ Admin account ready
-                </Badge>
+                <Badge variant="success">✓ Organization created</Badge>
+                <Badge variant="success">✓ Admin account ready</Badge>
                 <Badge variant="success">
                     ✓ {result.branches.length} branch{result.branches.length !== 1 ? "es" : ""} set up
                 </Badge>
             </div>
+
+            {/* FIX: List branch names and codes so admin can share them with staff.
+                Previously only showed the count, leaving admins with no actionable info. */}
+            {result.branches.length > 0 && (
+                <div className="w-full max-w-sm rounded-2xl bg-slate-50 border border-slate-200 overflow-hidden text-left">
+                    <div className="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-brand-600" />
+                        <p className="text-sm font-semibold text-ink">Created branches</p>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                        {result.branches.map((branch) => (
+                            <div key={branch.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                                <span className="text-sm text-ink font-medium truncate">
+                                    {branch.name}
+                                </span>
+                                <span className="text-xs font-mono text-brand-700 bg-brand-50 px-2 py-0.5 rounded flex-shrink-0">
+                                    {branch.code}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Credentials card */}
             <div className="w-full max-w-sm rounded-2xl bg-slate-50 border border-slate-200 p-5 text-left space-y-3">
@@ -104,14 +123,13 @@ export function SuccessScreen({ result, onGoToLogin }: SuccessScreenProps) {
                 </div>
             </div>
 
-            {/* CTA */}
             <Button onClick={onGoToLogin} size="lg" className="w-full max-w-sm">
                 Go to Login
                 <ArrowRight className="w-4 h-4" />
             </Button>
 
             <p className="text-xs text-ink-muted">
-                Save your credentials before proceeding
+                Save your credentials and branch codes before proceeding
             </p>
         </motion.div>
     );

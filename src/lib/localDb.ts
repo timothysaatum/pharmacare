@@ -39,6 +39,7 @@ async function runMigrations(db: Database): Promise<void> {
   if (user_version < 1) await migrate_v1(db);
   if (user_version < 2) await migrate_v2(db);
   if (user_version < 3) await migrate_v3(db);
+  if (user_version < 4) await migrate_v4(db);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,18 +67,23 @@ async function migrate_v1(db: Database): Promise<void> {
       strength          TEXT,
       manufacturer      TEXT,
       supplier          TEXT,
-      requires_prescription INTEGER NOT NULL DEFAULT 0,
-      unit_price        REAL NOT NULL,
-      cost_price        REAL,
-      tax_rate          REAL NOT NULL DEFAULT 0,
-      reorder_level     INTEGER NOT NULL DEFAULT 10,
-      reorder_quantity  INTEGER NOT NULL DEFAULT 50,
-      unit_of_measure   TEXT NOT NULL DEFAULT 'unit',
-      description       TEXT,
-      usage_instructions TEXT,
-      side_effects      TEXT,
-      storage_conditions TEXT,
-      is_active         INTEGER NOT NULL DEFAULT 1,
+      requires_prescription           INTEGER NOT NULL DEFAULT 0,
+      controlled_substance_schedule   TEXT,
+      ndc_code                        TEXT,
+      unit_price                      REAL NOT NULL,
+      cost_price                      REAL,
+      markup_percentage               REAL,
+      tax_rate                        REAL NOT NULL DEFAULT 0,
+      reorder_level                   INTEGER NOT NULL DEFAULT 10,
+      reorder_quantity                INTEGER NOT NULL DEFAULT 50,
+      max_stock_level                 INTEGER,
+      unit_of_measure                 TEXT NOT NULL DEFAULT 'unit',
+      description                     TEXT,
+      usage_instructions              TEXT,
+      side_effects                    TEXT,
+      contraindications               TEXT,
+      storage_conditions              TEXT,
+      is_active                       INTEGER NOT NULL DEFAULT 1,
       is_deleted        INTEGER NOT NULL DEFAULT 0,
       sync_status       TEXT NOT NULL DEFAULT 'synced',
       sync_version      INTEGER NOT NULL DEFAULT 1,
@@ -404,7 +410,34 @@ async function migrate_v3(db: Database): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SYNC METADATA HELPERS
+// MIGRATION V4 — add missing drug columns introduced in DrugForm rewrite
+//
+// Five columns were added to DrugCreate/DrugUpdate (markup_percentage,
+// max_stock_level, ndc_code, controlled_substance_schedule, contraindications)
+// but were never reflected in the local drugs table.  Without these columns
+// the sync engine's upsert would silently drop the values on every pull.
+//
+// All ADD COLUMN calls use try/catch so they are safe on both old installs
+// (column missing → add it) and fresh installs that already have them via
+// the corrected v1 above (duplicate column error → silently ignored).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function migrate_v4(db: Database): Promise<void> {
+  const addCol = async (col: string) => {
+    try { await db.execute(`ALTER TABLE drugs ADD COLUMN ${col}`); }
+    catch { /* column already exists on fresh installs — safe to ignore */ }
+  };
+
+  await addCol("controlled_substance_schedule TEXT");
+  await addCol("ndc_code                      TEXT");
+  await addCol("markup_percentage             REAL");
+  await addCol("max_stock_level               INTEGER");
+  await addCol("contraindications             TEXT");
+
+  await db.execute("PRAGMA user_version = 4");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getLastSyncAt(table?: string): Promise<string | null> {

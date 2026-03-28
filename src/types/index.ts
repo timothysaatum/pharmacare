@@ -777,23 +777,64 @@ export type PaymentMethod = "cash" | "card" | "mobile_money" | "insurance" | "cr
 export type PaymentStatus = "pending" | "completed" | "partial" | "refunded" | "cancelled";
 export type SaleStatus = "draft" | "completed" | "cancelled" | "refunded";
 
+/** Matches SaleItemCreate Pydantic schema */
+export interface SaleItemCreate {
+    drug_id: string;
+    quantity: number;
+    batch_id?: string;
+    requires_prescription: boolean;
+    prescription_verified: boolean;
+}
+
+/** Matches SaleCreate Pydantic schema exactly */
+export interface SaleCreate {
+    branch_id: string;
+    price_contract_id: string;
+    contract_verification_token?: string;
+    customer_id?: string;
+    customer_name?: string;
+    items: SaleItemCreate[];
+    payment_method: PaymentMethod;
+    amount_paid?: number;
+    payment_reference?: string;
+    split_payment_details?: Record<string, number>;
+    prescription_id?: string;
+    insurance_verified: boolean;
+    insurance_claim_number?: string;
+    insurance_preauth_number?: string;
+    notes?: string;
+}
+
 export interface SaleItem extends TimestampFields {
     id: string;
     sale_id: string;
     drug_id: string;
     drug_name: string;
     drug_sku: string | null;
+    drug_generic_name: string | null;
     batch_id: string | null;
+    batch_number: string | null;
+    batch_expiry_date: string | null;
     quantity: number;
     unit_price: number;
     subtotal: number;
     discount_percentage: number;
     discount_amount: number;
+    contract_discount_percentage: number;
+    contract_discount_amount: number;
+    additional_discount_amount: number;
+    total_discount_amount: number;
     tax_rate: number;
     tax_amount: number;
     total_price: number;
+    applied_contract_id: string | null;
+    applied_contract_name: string | null;
+    insurance_covered: boolean;
+    patient_copay: number | null;
     requires_prescription: boolean;
     prescription_verified: boolean;
+    prescription_id: string | null;
+    allergy_check_performed: boolean;
 }
 
 export interface Sale extends TimestampFields, SyncFields {
@@ -831,6 +872,27 @@ export interface Sale extends TimestampFields, SyncFields {
     receipt_printed: boolean;
     receipt_emailed: boolean;
     items: SaleItem[];
+}
+
+/** Sale with all resolved detail fields — used by ProcessSaleResponse and receipt display */
+export interface SaleWithDetails extends Sale {
+    contract_discount_amount: number;
+    additional_discount_amount: number;
+    total_discount_amount: number;
+    contract_type: string | null;
+    insurance_preauth_number: string | null;
+    split_payment_details: Record<string, number> | null;
+    cashier_name: string | null;
+    pharmacist_name: string | null;
+    manager_approval_user_id: string | null;
+    customer_full_name: string | null;
+    customer_phone: string | null;
+    customer_email: string | null;
+    customer_loyalty_tier: string | null;
+    branch_name: string;
+    branch_address: Record<string, unknown> | null;
+    organization_name: string;
+    organization_tax_id: string | null;
 }
 
 // ============================================================

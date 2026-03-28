@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
     Pill, Package, ShoppingCart, Users, BarChart2,
     LogOut, Building2, Menu, X, FileText,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
+import { branchApi } from "@/api/branches";
 import { SyncIndicator } from "@/components/layout/SyncIndicator";
 
 interface NavItem {
@@ -33,10 +34,32 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-    const { user, logout } = useAuthStore();
+    const { user, logout, activeBranchId } = useAuthStore();
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
+
+    // FIX: Resolve actual branch name from activeBranchId instead of
+    // hardcoding "Branch active". We keep a local state to avoid prop drilling.
+    const [branchName, setBranchName] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!activeBranchId) {
+            setBranchName(null);
+            return;
+        }
+        let cancelled = false;
+        branchApi
+            .getById(activeBranchId)
+            .then((b) => {
+                if (!cancelled) setBranchName(b.name);
+            })
+            .catch(() => {
+                // Silently fall back — worst case shows "Branch active"
+                if (!cancelled) setBranchName(null);
+            });
+        return () => { cancelled = true; };
+    }, [activeBranchId]);
 
     const handleLogout = async () => {
         setLoggingOut(true);
@@ -76,11 +99,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </button>
                 </div>
 
-                {/* Branch indicator */}
-                {!collapsed && (
+                {/* FIX: Branch indicator now shows the real branch name */}
+                {!collapsed && activeBranchId && (
                     <div className="mx-3 mt-3 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
                         <Building2 className="w-3 h-3 text-white/40 flex-shrink-0" />
-                        <span className="text-xs text-white/50 truncate">Branch active</span>
+                        <span className="text-xs text-white/60 truncate" title={branchName ?? undefined}>
+                            {branchName ?? "Loading…"}
+                        </span>
+                    </div>
+                )}
+
+                {/* Collapsed branch dot indicator */}
+                {collapsed && activeBranchId && (
+                    <div className="flex justify-center mt-3">
+                        <div
+                            className="w-2 h-2 rounded-full bg-brand-400"
+                            title={branchName ?? "Branch active"}
+                        />
                     </div>
                 )}
 

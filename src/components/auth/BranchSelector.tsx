@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { MapPin, ChevronRight, Building2, CheckCircle2 } from "lucide-react";
+import { MapPin, ChevronRight, Building2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui";
 import type { UserResponse, BranchListItem } from "@/types";
@@ -16,10 +16,15 @@ export function BranchSelector({ user, branches, onSelect }: BranchSelectorProps
     const [selected, setSelected] = useState<string | null>(null);
     const [confirming, setConfirming] = useState(false);
 
-    // Filter to only branches the user is assigned to
+    // Only show branches the user is assigned to
     const assignedBranches = branches.filter((b) =>
         user.assigned_branches?.map(String).includes(String(b.id))
     );
+
+    // FIX: Distinguish between "user has no assignments" vs "no active branches exist
+    // in the org at all" so the message gives actionable guidance in each case.
+    const orgHasBranches = branches.length > 0;
+    const userHasAssignments = (user.assigned_branches?.length ?? 0) > 0;
 
     const handleConfirm = async () => {
         if (!selected) return;
@@ -28,7 +33,6 @@ export function BranchSelector({ user, branches, onSelect }: BranchSelectorProps
             setActiveBranch(selected);
             onSelect(selected);
         } finally {
-            // Reset in case onSelect does not navigate away (e.g. error boundary)
             setConfirming(false);
         }
     };
@@ -45,15 +49,50 @@ export function BranchSelector({ user, branches, onSelect }: BranchSelectorProps
                     Select a branch
                 </h2>
                 <p className="text-sm text-ink-secondary mt-1">
-                    Welcome back, <span className="font-semibold text-ink">{user.full_name}</span>.
+                    Welcome back,{" "}
+                    <span className="font-semibold text-ink">{user.full_name}</span>.
                     Choose which branch to work in today.
                 </p>
             </div>
 
             <div className="space-y-2">
                 {assignedBranches.length === 0 ? (
-                    <div className="rounded-xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-700">
-                        You have no branches assigned to your account. Contact your administrator.
+                    // FIX: Context-aware empty state messages
+                    <div className="rounded-xl bg-amber-50 border border-amber-100 p-4 flex gap-3">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                            {!orgHasBranches ? (
+                                <>
+                                    <p className="text-sm font-semibold text-amber-800">
+                                        No branches found
+                                    </p>
+                                    <p className="text-sm text-amber-700">
+                                        Your organisation has no active branches yet. An admin
+                                        needs to create at least one branch before you can log in.
+                                    </p>
+                                </>
+                            ) : !userHasAssignments ? (
+                                <>
+                                    <p className="text-sm font-semibold text-amber-800">
+                                        No branches assigned
+                                    </p>
+                                    <p className="text-sm text-amber-700">
+                                        Your account hasn't been assigned to any branch yet.
+                                        Contact your administrator to get access.
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="text-sm font-semibold text-amber-800">
+                                        No accessible branches
+                                    </p>
+                                    <p className="text-sm text-amber-700">
+                                        Your assigned branch{user.assigned_branches!.length > 1 ? "es" : ""}{" "}
+                                        may have been deactivated. Contact your administrator.
+                                    </p>
+                                </>
+                            )}
+                        </div>
                     </div>
                 ) : (
                     assignedBranches.map((branch) => {
@@ -64,8 +103,8 @@ export function BranchSelector({ user, branches, onSelect }: BranchSelectorProps
                                 type="button"
                                 onClick={() => setSelected(String(branch.id))}
                                 className={`w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all duration-150 text-left ${isSelected
-                                    ? "border-brand-500 bg-brand-50"
-                                    : "border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/30"
+                                        ? "border-brand-500 bg-brand-50"
+                                        : "border-slate-200 bg-white hover:border-brand-300 hover:bg-brand-50/30"
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
@@ -78,17 +117,20 @@ export function BranchSelector({ user, branches, onSelect }: BranchSelectorProps
                                         />
                                     </div>
                                     <div>
-                                        <p
-                                            className={`text-sm font-semibold ${isSelected ? "text-brand-700" : "text-ink"
-                                                }`}
-                                        >
+                                        <p className={`text-sm font-semibold ${isSelected ? "text-brand-700" : "text-ink"}`}>
                                             {branch.name}
                                         </p>
-                                        {branch.phone && (
-                                            <p className="text-xs text-ink-muted mt-0.5">
-                                                {branch.phone}
-                                            </p>
-                                        )}
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                            {/* FIX: Show branch code and phone for easier identification */}
+                                            <span className="text-xs font-mono text-ink-muted bg-slate-100 px-1.5 py-0.5 rounded">
+                                                {branch.code}
+                                            </span>
+                                            {branch.phone && (
+                                                <span className="text-xs text-ink-muted">
+                                                    {branch.phone}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                                 {isSelected ? (

@@ -86,6 +86,7 @@ export const adminStepSchema = z
 // ── Step 3: Branches (mirrors BranchCreate Pydantic schema) ──
 const branchSchema = z.object({
     name: z.string().min(1, "Branch name is required").max(255, "Too long"),
+    code: z.string().max(50).optional().or(z.literal("")),
     branch_phone: phone,
     branch_email: optionalEmail,
     // address.country always has a default so it satisfies BranchAddress.country: str

@@ -56,6 +56,10 @@ export function buildOnboardingPayload(values: OnboardingValues): OnboardingRequ
     if (values.branches && values.branches.length > 0) {
         branches = values.branches.map((b) => ({
             name: b.name,
+            // FIX: code was silently dropped — now mapped to API payload.
+            // BranchCreate.code is optional; the server auto-generates one
+            // if omitted, but if the user typed one it must be sent.
+            code: clean(b.code) ?? undefined,
             phone: clean(b.branch_phone),
             email: clean(b.branch_email),
             address: {

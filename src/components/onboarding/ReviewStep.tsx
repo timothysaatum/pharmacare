@@ -7,13 +7,13 @@ import {
 import type { OnboardingValues } from "@/lib/validators";
 import { Badge } from "../ui";
 
-const TIER_LABELS = {
+const TIER_LABELS: Record<string, string> = {
     basic: "Basic",
     professional: "Professional",
     enterprise: "Enterprise",
 };
 
-const TYPE_LABELS = {
+const TYPE_LABELS: Record<string, string> = {
     pharmacy: "Pharmacy",
     otc: "Over-The-Counter",
     hospital_pharmacy: "Hospital Pharmacy",
@@ -93,7 +93,6 @@ export function ReviewStep({ form, onGoToStep, submitError }: ReviewStepProps) {
                 </p>
             </div>
 
-            {/* Submit error */}
             {submitError && (
                 <div className="rounded-xl bg-red-50 border border-red-100 p-4 flex gap-3">
                     <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -157,15 +156,32 @@ export function ReviewStep({ form, onGoToStep, submitError }: ReviewStepProps) {
             >
                 {values.branches && values.branches.length > 0 ? (
                     values.branches.map((branch, i) => (
-                        <div key={i} className="py-2">
-                            <div className="flex items-center gap-2">
-                                <div className="w-5 h-5 rounded-md bg-brand-100 flex items-center justify-center">
+                        <div key={i} className="py-3">
+                            <div className="flex items-start gap-2">
+                                <div className="w-5 h-5 rounded-md bg-brand-100 flex items-center justify-center flex-shrink-0 mt-0.5">
                                     <span className="text-[10px] font-bold text-brand-700">{i + 1}</span>
                                 </div>
-                                <span className="text-sm font-medium text-ink">{branch.name}</span>
-                                {branch.address?.city && (
-                                    <span className="text-xs text-ink-muted">· {branch.address.city}</span>
-                                )}
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-ink">{branch.name}</p>
+                                    
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                        {branch.code && (
+                                            <span className="text-xs font-mono text-brand-700 bg-brand-50 px-1.5 py-0.5 rounded">
+                                                {branch.code}
+                                            </span>
+                                        )}
+                                        {branch.address?.city && (
+                                            <span className="text-xs text-ink-muted">
+                                                {branch.address.city}
+                                            </span>
+                                        )}
+                                        {branch.branch_phone && (
+                                            <span className="text-xs text-ink-muted">
+                                                · {branch.branch_phone}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     ))

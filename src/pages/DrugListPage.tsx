@@ -3,17 +3,44 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
     Search, Plus, Filter, ChevronLeft, ChevronRight,
     Pill, AlertTriangle, Package, Edit2, ToggleLeft,
-    ToggleRight, RefreshCw, X,
+    ToggleRight, RefreshCw, X, FolderTree,
 } from "lucide-react";
 import { drugApi } from "@/api/drugs";
 import { useAuthStore } from "@/stores/authStore";
 import { useDebounce } from "@/hooks/useDebounce";
-import { useCategories } from "@/hooks/useCategories";
+import { useCategoryTree } from "@/hooks/useCategories";
 import { DrugForm } from "@/components/drugs/DrugForm";
 import { AddBatchForm } from "@/components/inventory/AddBatchForm";
+import { DrugCategoryModal } from "@/components/drugs/DrugCategoryModal";
 import { parseApiError } from "@/api/client";
 import { appEvents, useAppEvent } from "@/lib/events";
-import type { Drug, DrugBatch, DrugType } from "@/types";
+import type { Drug, DrugBatch, DrugType, DrugCategoryTree } from "@/types";
+
+// ── Render hierarchical <option> elements from the category tree ─────────────
+// Matches the same helper in DrugForm so the two dropdowns stay in sync.
+function renderCategoryOptions(
+    nodes: DrugCategoryTree[],
+    depth = 0
+): React.ReactNode[] {
+    return nodes.flatMap((node) => [
+        <option key={node.id} value={node.id}>
+            {"\u00A0\u00A0".repeat(depth * 2)}{depth > 0 ? "↳ " : ""}{node.name}
+        </option>,
+        ...renderCategoryOptions(node.children ?? [], depth + 1),
+    ]);
+}
+
+// ── Flatten a category tree into a Map<id, name> for O(1) table row lookup ──
+function flattenTree(
+    nodes: DrugCategoryTree[],
+    acc = new Map<string, string>()
+): Map<string, string> {
+    for (const node of nodes) {
+        acc.set(node.id, node.name);
+        if (node.children?.length) flattenTree(node.children, acc);
+    }
+    return acc;
+}
 
 const DRUG_TYPE_LABELS: Record<string, string> = {
     otc: "OTC",
@@ -35,8 +62,10 @@ export default function DrugListPage() {
     const { user, activeBranchId } = useAuthStore();
     const canEdit = !!user?.role && ["admin", "manager", "super_admin"].includes(user.role);
 
-    // Shared category cache — no duplicate fetch with DrugForm
-    const { categories } = useCategories();
+    // FIX: tree gives hierarchy in the filter dropdown — shared cache with DrugForm
+    const { tree: categoryTree, invalidate: invalidateCategories } = useCategoryTree();
+    // FIX: flat id→name map for O(1) table row lookups
+    const categoryMap = flattenTree(categoryTree);
 
     // ── State ─────────────────────────────────────────────────
     const [drugs, setDrugs] = useState<Drug[]>([]);
@@ -61,6 +90,11 @@ export default function DrugListPage() {
     const [showAddDrug, setShowAddDrug] = useState(false);
     const [editingDrug, setEditingDrug] = useState<Drug | null>(null);
     const [addingBatchFor, setAddingBatchFor] = useState<Drug | null>(null);
+    // Category create/edit modal
+    const [categoryModal, setCategoryModal] = useState<{
+        open: boolean;
+        editingCategory?: import("@/types").DrugCategory;
+    }>({ open: false });
 
     // Per-row loading state for toggle so the user gets instant feedback
     const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -188,13 +222,24 @@ export default function DrugListPage() {
                             <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
                         </button>
                         {canEdit && (
-                            <button
-                                onClick={() => setShowAddDrug(true)}
-                                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-xl transition-colors"
-                            >
-                                <Plus className="w-4 h-4" />
-                                Add Drug
-                            </button>
+                            <>
+                                {/* Manage Categories — opens the category modal for create/edit */}
+                                <button
+                                    onClick={() => setCategoryModal({ open: true })}
+                                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-ink-secondary border border-slate-200 hover:text-ink hover:bg-slate-50 rounded-xl transition-colors"
+                                    title="Manage drug categories"
+                                >
+                                    <FolderTree className="w-4 h-4" />
+                                    Categories
+                                </button>
+                                <button
+                                    onClick={() => setShowAddDrug(true)}
+                                    className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-brand-600 hover:bg-brand-700 rounded-xl transition-colors"
+                                >
+                                    <Plus className="w-4 h-4" />
+                                    Add Drug
+                                </button>
+                            </>
                         )}
                     </div>
                 </div>
@@ -253,9 +298,8 @@ export default function DrugListPage() {
                                 <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)}
                                     className="text-sm rounded-xl border border-slate-200 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500/30">
                                     <option value="">All categories</option>
-                                    {categories.map((c) => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
+                                    {/* FIX: render tree with indentation instead of flat list */}
+                                    {renderCategoryOptions(categoryTree)}
                                 </select>
 
                                 <select value={filterActive} onChange={(e) => setFilterActive(e.target.value as "" | "true" | "false")}
@@ -318,7 +362,6 @@ export default function DrugListPage() {
                         </thead>
                         <tbody className="divide-y divide-slate-100 bg-white">
                             {drugs.map((drug) => {
-                                const cat = categories.find((c) => c.id === drug.category_id);
                                 const isToggling = togglingId === drug.id;
                                 return (
                                     <motion.tr key={drug.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
@@ -337,7 +380,8 @@ export default function DrugListPage() {
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-ink-secondary text-xs">
-                                            {cat?.name ?? <span className="text-ink-muted">—</span>}
+                                            {/* FIX: O(1) map lookup replacing O(n) .find() */}
+                                            {categoryMap.get(drug.category_id ?? "") ?? <span className="text-ink-muted">—</span>}
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                             <span className="font-semibold text-ink">₵{Number(drug.unit_price).toFixed(2)}</span>
@@ -434,6 +478,18 @@ export default function DrugListPage() {
                         branchId={activeBranchId}
                         onSuccess={handleBatchAdded}
                         onCancel={() => setAddingBatchFor(null)}
+                    />
+                )}
+                {categoryModal.open && (
+                    <DrugCategoryModal
+                        category={categoryModal.editingCategory}
+                        categoryTree={categoryTree}
+                        onSuccess={() => {
+                            // Invalidate tree cache so filter dropdown and DrugForm both refresh
+                            invalidateCategories();
+                            setCategoryModal({ open: false });
+                        }}
+                        onCancel={() => setCategoryModal({ open: false })}
                     />
                 )}
             </AnimatePresence>

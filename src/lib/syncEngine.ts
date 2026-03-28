@@ -274,10 +274,12 @@ class SyncEngine {
             await upsertMany("drugs", response.drugs, [
                 "id", "organization_id", "name", "generic_name", "brand_name",
                 "sku", "barcode", "category_id", "drug_type", "dosage_form",
-                "strength", "manufacturer", "supplier", "requires_prescription",
-                "unit_price", "cost_price", "tax_rate", "reorder_level",
-                "reorder_quantity", "unit_of_measure", "description",
-                "usage_instructions", "side_effects", "storage_conditions",
+                "strength", "manufacturer", "supplier",
+                "requires_prescription", "controlled_substance_schedule", "ndc_code",
+                "unit_price", "cost_price", "markup_percentage", "tax_rate",
+                "reorder_level", "reorder_quantity", "max_stock_level",
+                "unit_of_measure", "description", "usage_instructions",
+                "side_effects", "contraindications", "storage_conditions",
                 "is_active", "is_deleted", "sync_status", "sync_version",
                 "synced_at", "updated_at", "created_at",
             ]);
