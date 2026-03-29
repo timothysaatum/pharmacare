@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
     Pill, Package, ShoppingCart, Users, BarChart2,
-    LogOut, Building2, Menu, X, FileText,
+    LogOut, Building2, Menu, X, FileText, ScrollText
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { branchApi } from "@/api/branches";
@@ -20,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
     { to: "/inventory", icon: Package, label: "Inventory" },
     { to: "/pos", icon: ShoppingCart, label: "Point of Sale" },
     { to: "/customers", icon: Users, label: "Customers" },
+    { to: "/contracts", icon: ScrollText, label: "Contracts" },
     { to: "/purchases", icon: FileText, label: "Purchases", roles: ["admin", "manager", "super_admin"] },
     { to: "/reports", icon: BarChart2, label: "Reports", roles: ["admin", "manager", "super_admin"] },
 ];
@@ -39,8 +40,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const [collapsed, setCollapsed] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
 
-    // FIX: Resolve actual branch name from activeBranchId instead of
-    // hardcoding "Branch active". We keep a local state to avoid prop drilling.
     const [branchName, setBranchName] = useState<string | null>(null);
 
     useEffect(() => {
@@ -99,7 +98,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </button>
                 </div>
 
-                {/* FIX: Branch indicator now shows the real branch name */}
                 {!collapsed && activeBranchId && (
                     <div className="mx-3 mt-3 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
                         <Building2 className="w-3 h-3 text-white/40 flex-shrink-0" />

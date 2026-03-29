@@ -1,5 +1,4 @@
 /**
- * api/contracts.ts
  * ================
  * HTTP wrappers for all price contract endpoints.
  * Verified against price_contract_endpoints.py.

@@ -41,10 +41,7 @@ import { useCart } from "@/hooks/useCart";
 import { DrugSearchPanel } from "@/components/pos/DrugSearchPanel";
 import { CartPanel } from "@/components/pos/CartPanel";
 import { SaleSuccessModal } from "@/components/pos/SaleSuccessModal";
-// import { useCart } from "./useCart";
-// import { DrugSearchPanel } from "./DrugSearchPanel";
-// import { CartPanel } from "./CartPanel";
-// import { SaleSuccessModal } from "./SaleSuccessModal";
+
 
 export default function POSPage() {
     const { user, activeBranchId } = useAuthStore();

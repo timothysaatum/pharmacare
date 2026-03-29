@@ -16,7 +16,7 @@ import {
     Plus, RefreshCw, Search, Filter, X,
     CheckCircle2, AlertTriangle, Clock, Ban,
     Copy, Trash2, Edit2, ChevronLeft,
-    ChevronRight, TrendingUp, Users,
+    ChevronRight, TrendingUp, 
     ShieldCheck, Zap,
 } from "lucide-react";
 import { contractsApi, type ContractResponse, type ContractListParams } from "@/api/contracts";
