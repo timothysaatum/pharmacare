@@ -293,16 +293,16 @@ export default function POSPage() {
 
             {/* Two-panel layout */}
             <div className="flex flex-1 min-h-0 overflow-hidden">
-                {/* Left: Drug search */}
-                <div className="w-[55%] border-r border-slate-200 flex flex-col min-h-0">
+                {/* Left: Drug search — takes remaining space */}
+                <div className="flex-1 border-r border-slate-200 flex flex-col min-h-0">
                     <DrugSearchPanel
                         onAdd={cart.addItem}
                         disabledDrugIds={cartDrugIds}
                     />
                 </div>
 
-                {/* Right: Cart */}
-                <div className="w-[45%] flex flex-col min-h-0 overflow-y-auto">
+                {/* Right: Cart — fixed width flush to screen edge */}
+                <div className="w-[38%] flex-shrink-0 flex flex-col min-h-0 overflow-hidden">
                     <CartPanel
                         items={cart.state.items}
                         contract={cart.state.contract}

@@ -1,5 +1,4 @@
 /**
- * api/customers.ts
  * ================
  * HTTP wrappers for all customer endpoints.
  * Derived from customer_schemas.py + REST conventions.
@@ -16,7 +15,7 @@
  */
 
 import { get, post, patch, del } from "./client";
-import type { Customer, PaginatedResponse } from "@/types";
+import type { Customer } from "@/types";
 
 // ── Response shapes ───────────────────────────────────────────────────────────
 

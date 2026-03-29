@@ -1,5 +1,4 @@
 /**
- * CustomersPage.tsx
  * =================
  * Customer management page.
  *

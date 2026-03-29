@@ -1,27 +1,36 @@
 /**
- * =============
- * Right panel of the POS. Shows cart items, contract selector,
- * customer input, totals, and the checkout button.
+ * CartPanel — right side of POS
+ *
+ * Layout strategy (bulletproof):
+ *   - Outer div: flex-col h-full
+ *   - Sticky header (flex-shrink-0)
+ *   - ONE scrollable middle zone (flex-1 overflow-y-auto) containing:
+ *       • cart item rows
+ *       • divider
+ *       • checkout form fields
+ *   - Sticky footer: totals + Complete Sale button (flex-shrink-0)
+ *
+ * This avoids ALL nested-flex height issues by having only ONE scroll container.
  */
 
 import { useEffect, useRef } from "react";
 import {
     Trash2, Plus, Minus, ShieldAlert, ChevronDown,
-    User, FileText, AlertCircle, ShoppingCart,
+    User, FileText, AlertCircle, ShoppingCart, Package,
+    Receipt, Banknote, Tag,
 } from "lucide-react";
-// import type { CartItem, CartTotals, CartValidationError, PaymentMethod } from "./useCart";
 import type { AvailableContract } from "@/api/contracts";
 import { PaymentMethod } from "@/types";
 import { CartItem, CartTotals, CartValidationError } from "@/hooks/useCart";
 
 const CONTRACT_TYPE_COLORS: Record<string, string> = {
-    standard: "bg-slate-100 text-slate-700",
-    insurance: "bg-blue-50 text-blue-700",
+    standard: "bg-slate-100 text-slate-600",
+    insurance: "bg-blue-50  text-blue-700",
     corporate: "bg-purple-50 text-purple-700",
     staff: "bg-green-50 text-green-700",
     senior_citizen: "bg-amber-50 text-amber-700",
     wholesale: "bg-orange-50 text-orange-700",
-    promotional: "bg-pink-50 text-pink-700",
+    promotional: "bg-pink-50  text-pink-700",
 };
 
 const PAYMENT_METHODS: Array<{ value: PaymentMethod; label: string }> = [
@@ -68,9 +77,19 @@ interface CartPanelProps {
 }
 
 const inputCls =
-    "w-full h-9 px-3 rounded-xl border border-slate-200 text-sm text-ink bg-white " +
-    "focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500";
-const labelCls = "block text-xs font-semibold text-ink-muted uppercase tracking-wide mb-1";
+    "w-full h-10 px-3 rounded-lg border border-slate-200 text-sm text-ink bg-white " +
+    "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-colors";
+
+const labelCls = "block text-[11px] font-semibold text-ink-muted uppercase tracking-widest mb-1.5";
+
+function SectionLabel({ icon: Icon, children }: { icon: React.ElementType; children: React.ReactNode }) {
+    return (
+        <div className="flex items-center gap-2 mb-3">
+            <Icon className="w-3.5 h-3.5 text-ink-muted" />
+            <span className="text-[11px] font-bold text-ink-muted uppercase tracking-widest">{children}</span>
+        </div>
+    );
+}
 
 export function CartPanel({
     items, contract, contracts, contractsLoading,
@@ -82,7 +101,6 @@ export function CartPanel({
     onSetPrescriptionId, onSetInsuranceClaimNumber, onSetInsurancePreAuthNumber,
     onSetInsuranceVerified, onSetNotes, onCheckout, onClearCart,
 }: CartPanelProps) {
-    // Auto-select default contract when contracts load
     const autoSelectedRef = useRef(false);
     useEffect(() => {
         if (!autoSelectedRef.current && contracts.length > 0 && !contract) {
@@ -96,337 +114,392 @@ export function CartPanel({
     const isInsurance = paymentMethod === "insurance" || contract?.type === "insurance";
     const fieldError = (field: string) =>
         validationErrors.find((e) => e.field === field)?.message;
+    const hasErrors = validationErrors.length > 0 && items.length > 0;
+    const isEmpty = items.length === 0;
 
     return (
-        <div className="flex flex-col h-full">
-            {/* ── Cart items ── */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2 min-h-0">
-                {items.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-32 gap-2 text-ink-muted">
-                        <ShoppingCart className="w-8 h-8 opacity-25" />
-                        <p className="text-xs">Cart is empty — add drugs from the left</p>
-                    </div>
-                ) : (
-                    items.map((item) => (
-                        <div
-                            key={item.drug.id}
-                            className="rounded-xl border border-slate-100 bg-white p-3 space-y-2"
-                        >
-                            <div className="flex items-start gap-2">
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-semibold text-ink truncate">
-                                        {item.drug.name}
-                                    </p>
-                                    <p className="text-xs text-ink-muted">
-                                        ₵{item.drug.unit_price.toFixed(2)} each
-                                        {item.drug.strength && ` · ${item.drug.strength}`}
-                                    </p>
-                                </div>
-                                {/* Quantity stepper */}
-                                <div className="flex items-center gap-1 flex-shrink-0">
-                                    <button
-                                        onClick={() => onSetQuantity(item.drug.id, item.quantity - 1)}
-                                        className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 text-ink-muted hover:text-ink hover:bg-slate-50 transition-colors"
-                                    >
-                                        <Minus className="w-3 h-3" />
-                                    </button>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={1000}
-                                        value={item.quantity}
-                                        onChange={(e) =>
-                                            onSetQuantity(item.drug.id, parseInt(e.target.value) || 1)
-                                        }
-                                        className="w-12 h-7 text-center text-sm font-semibold border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-brand-500"
-                                    />
-                                    <button
-                                        onClick={() => onSetQuantity(item.drug.id, item.quantity + 1)}
-                                        className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 text-ink-muted hover:text-ink hover:bg-slate-50 transition-colors"
-                                    >
-                                        <Plus className="w-3 h-3" />
-                                    </button>
-                                </div>
-                                {/* Line total */}
-                                <div className="text-right flex-shrink-0 w-16">
-                                    <p className="text-sm font-bold text-ink">
-                                        ₵{(item.drug.unit_price * item.quantity).toFixed(2)}
-                                    </p>
-                                </div>
-                                <button
-                                    onClick={() => onRemoveItem(item.drug.id)}
-                                    className="w-7 h-7 flex items-center justify-center text-ink-muted hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                            </div>
+        <div className="flex flex-col h-full bg-white">
 
-                            {/* Prescription verification */}
-                            {item.requiresPrescription && (
-                                <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${
-                                    item.prescriptionVerified
-                                        ? "bg-green-50 text-green-700"
-                                        : "bg-purple-50 text-purple-700"
-                                }`}>
-                                    <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
-                                    <span className="flex-1">Prescription drug</span>
-                                    <label className="flex items-center gap-1.5 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={item.prescriptionVerified}
-                                            onChange={(e) =>
-                                                onSetPrescriptionVerified(item.drug.id, e.target.checked)
-                                            }
-                                            className="w-3.5 h-3.5 rounded"
-                                        />
-                                        <span className="font-semibold">Verified</span>
-                                    </label>
-                                </div>
-                            )}
-                        </div>
-                    ))
+            {/* ═══ STICKY HEADER ═══ */}
+            <div className="flex-shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-white">
+                <div className="flex items-center gap-2.5">
+                    <div className={`p-1.5 rounded-lg ${isEmpty ? "bg-slate-100" : "bg-brand-50"}`}>
+                        <ShoppingCart className={`w-4 h-4 ${isEmpty ? "text-slate-400" : "text-brand-600"}`} />
+                    </div>
+                    <span className="text-sm font-bold text-ink">Cart</span>
+                    {!isEmpty && (
+                        <span className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 text-[11px] font-bold bg-brand-600 text-white rounded-full">
+                            {items.length}
+                        </span>
+                    )}
+                </div>
+                {!isEmpty && (
+                    <button
+                        onClick={onClearCart}
+                        type="button"
+                        className="text-xs text-slate-400 hover:text-red-500 font-medium transition-colors flex items-center gap-1"
+                    >
+                        <Trash2 className="w-3 h-3" />
+                        Clear
+                    </button>
                 )}
             </div>
 
-            {/* ── Checkout form ── */}
-            <div className="border-t border-slate-100 bg-slate-50/50 px-4 pt-3 pb-4 space-y-3 flex-shrink-0">
+            {/* ═══ SINGLE SCROLL ZONE ═══ */}
+            <div className="flex-1 overflow-y-auto min-h-0">
 
-                {/* Contract selector */}
-                <div>
-                    <label className={labelCls}>Price Contract</label>
-                    <div className="relative">
-                        <select
-                            value={contract?.id ?? ""}
-                            onChange={(e) => {
-                                const c = contracts.find((x) => x.id === e.target.value) ?? null;
-                                onSetContract(c);
-                            }}
-                            disabled={contractsLoading}
-                            className={`${inputCls} appearance-none pr-8 ${fieldError("contract") ? "border-red-300" : ""}`}
-                        >
-                            {contractsLoading ? (
-                                <option>Loading contracts…</option>
-                            ) : (
-                                <>
-                                    <option value="">— Select contract —</option>
-                                    {contracts.map((c) => (
-                                        <option key={c.id} value={c.id}>
-                                            {c.display}
-                                        </option>
-                                    ))}
-                                </>
-                            )}
-                        </select>
-                        <ChevronDown className="absolute right-3 top-2.5 w-3.5 h-3.5 text-ink-muted pointer-events-none" />
-                    </div>
-                    {contract && (
-                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${CONTRACT_TYPE_COLORS[contract.type] ?? "bg-slate-100 text-ink-muted"}`}>
-                                {contract.type.toUpperCase()}
-                            </span>
-                            {contract.discount_percentage > 0 && (
-                                <span className="text-xs text-green-600 font-semibold">
-                                    {contract.discount_percentage}% off
-                                </span>
-                            )}
-                            {contract.warning && (
-                                <span className="text-xs text-amber-600 flex items-center gap-1">
-                                    <AlertCircle className="w-3 h-3" />
-                                    {contract.warning}
-                                </span>
-                            )}
+                {/* ── Empty state ── */}
+                {isEmpty ? (
+                    <div className="flex flex-col items-center justify-center h-full gap-4 px-8 py-16 text-center">
+                        <div className="w-20 h-20 rounded-3xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center">
+                            <Package className="w-9 h-9 text-slate-300" />
                         </div>
-                    )}
-                    {fieldError("contract") && (
-                        <p className="text-xs text-red-500 mt-1">{fieldError("contract")}</p>
-                    )}
-                </div>
-
-                {/* Customer */}
-                <div>
-                    <label className={labelCls}>Customer</label>
-                    <div className="relative">
-                        <User className="absolute left-3 top-2.5 w-3.5 h-3.5 text-ink-muted" />
-                        <input
-                            value={customerName}
-                            onChange={(e) => onSetCustomerName(e.target.value)}
-                            placeholder="Walk-in customer name"
-                            className={`${inputCls} pl-8 ${fieldError("customer") ? "border-red-300" : ""}`}
-                        />
-                    </div>
-                    {fieldError("customer") && (
-                        <p className="text-xs text-red-500 mt-1">{fieldError("customer")}</p>
-                    )}
-                </div>
-
-                {/* Prescription section */}
-                {hasRxItems && (
-                    <div>
-                        <label className={labelCls}>Prescription ID</label>
-                        <div className="relative">
-                            <FileText className="absolute left-3 top-2.5 w-3.5 h-3.5 text-ink-muted" />
-                            <input
-                                value={prescriptionId ?? ""}
-                                onChange={(e) => onSetPrescriptionId(e.target.value || null)}
-                                placeholder="Prescription reference number"
-                                className={`${inputCls} pl-8 ${fieldError("prescription_id") ? "border-red-300" : ""}`}
-                            />
-                        </div>
-                        {fieldError("prescription_id") && (
-                            <p className="text-xs text-red-500 mt-1">{fieldError("prescription_id")}</p>
-                        )}
-                    </div>
-                )}
-
-                {/* Insurance section */}
-                {isInsurance && (
-                    <div className="space-y-2 p-3 rounded-xl bg-blue-50 border border-blue-100">
-                        <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
-                            Insurance Details
-                        </p>
-                        <input
-                            value={insuranceClaimNumber}
-                            onChange={(e) => onSetInsuranceClaimNumber(e.target.value)}
-                            placeholder="Claim number *"
-                            className={`${inputCls} ${fieldError("insurance_claim") ? "border-red-300" : "border-blue-200"}`}
-                        />
-                        <input
-                            value={insurancePreAuthNumber}
-                            onChange={(e) => onSetInsurancePreAuthNumber(e.target.value)}
-                            placeholder="Pre-auth number (optional)"
-                            className={`${inputCls} border-blue-200`}
-                        />
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={insuranceVerified}
-                                onChange={(e) => onSetInsuranceVerified(e.target.checked)}
-                                className="w-4 h-4 rounded"
-                            />
-                            <span className="text-sm font-semibold text-blue-700">
-                                Insurance card verified ✓
-                            </span>
-                        </label>
-                        {fieldError("insurance") && (
-                            <p className="text-xs text-red-500">{fieldError("insurance")}</p>
-                        )}
-                    </div>
-                )}
-
-                {/* Payment method */}
-                <div>
-                    <label className={labelCls}>Payment Method</label>
-                    <div className="flex gap-1 flex-wrap">
-                        {PAYMENT_METHODS.map((m) => (
-                            <button
-                                key={m.value}
-                                onClick={() => onSetPaymentMethod(m.value)}
-                                type="button"
-                                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                                    paymentMethod === m.value
-                                        ? "bg-brand-600 text-white"
-                                        : "bg-white border border-slate-200 text-ink-secondary hover:text-ink"
-                                }`}
-                            >
-                                {m.label}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Amount paid (cash/split) */}
-                {(paymentMethod === "cash" || paymentMethod === "split") && (
-                    <div>
-                        <label className={labelCls}>Amount Tendered (GHS)</label>
-                        <div className="relative">
-                            <span className="absolute left-3 top-2 text-sm text-ink-muted">₵</span>
-                            <input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={amountPaid || ""}
-                                onChange={(e) =>
-                                    onSetAmountPaid(parseFloat(e.target.value) || 0)
-                                }
-                                placeholder={totals.total.toFixed(2)}
-                                className={`${inputCls} pl-7 ${fieldError("amount_paid") ? "border-red-300" : ""}`}
-                            />
-                        </div>
-                        {fieldError("amount_paid") && (
-                            <p className="text-xs text-red-500 mt-1">{fieldError("amount_paid")}</p>
-                        )}
-                    </div>
-                )}
-
-                {/* Notes */}
-                <div>
-                    <label className={labelCls}>Notes (optional)</label>
-                    <input
-                        value={notes}
-                        onChange={(e) => onSetNotes(e.target.value)}
-                        placeholder="Any notes about this sale…"
-                        className={inputCls}
-                    />
-                </div>
-
-                {/* Totals */}
-                <div className="rounded-xl bg-white border border-slate-200 p-3 space-y-1.5">
-                    <div className="flex justify-between text-xs text-ink-secondary">
-                        <span>Subtotal ({totals.itemCount} items)</span>
-                        <span>₵{totals.subtotal.toFixed(2)}</span>
-                    </div>
-                    {totals.discountAmount > 0 && (
-                        <div className="flex justify-between text-xs text-green-600">
-                            <span>Discount ({contract?.discount_percentage}%)</span>
-                            <span>−₵{totals.discountAmount.toFixed(2)}</span>
-                        </div>
-                    )}
-                    {totals.taxAmount > 0 && (
-                        <div className="flex justify-between text-xs text-ink-secondary">
-                            <span>Tax</span>
-                            <span>₵{totals.taxAmount.toFixed(2)}</span>
-                        </div>
-                    )}
-                    <div className="flex justify-between text-base font-bold text-ink border-t border-slate-100 pt-1.5 mt-1.5">
-                        <span>Total</span>
-                        <span>₵{totals.total.toFixed(2)}</span>
-                    </div>
-                    {amountPaid > 0 && totals.change > 0 && (
-                        <div className="flex justify-between text-sm font-semibold text-emerald-600 bg-emerald-50 rounded-lg px-2 py-1.5">
-                            <span>Change</span>
-                            <span>₵{totals.change.toFixed(2)}</span>
-                        </div>
-                    )}
-                </div>
-
-                {/* Validation errors summary */}
-                {validationErrors.length > 0 && items.length > 0 && (
-                    <div className="rounded-xl bg-red-50 border border-red-100 p-2.5 space-y-1">
-                        {validationErrors.map((e) => (
-                            <p key={e.field} className="text-xs text-red-600 flex items-start gap-1.5">
-                                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                                {e.message}
+                        <div>
+                            <p className="text-sm font-semibold text-slate-500">Cart is empty</p>
+                            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                                Search for a drug on the left<br />and tap <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-mono text-slate-500">+</kbd> to add it
                             </p>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="px-4 pt-4 pb-2 space-y-2">
+
+                        {/* ── Cart items ── */}
+                        {items.map((item, idx) => (
+                            <div
+                                key={item.drug.id}
+                                className="group relative rounded-xl border border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm transition-all duration-150"
+                            >
+                                {/* Index pip */}
+                                <div className="absolute -left-0 top-3.5 w-5 h-5 -ml-2.5 rounded-full bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-500 z-10">
+                                    {idx + 1}
+                                </div>
+
+                                <div className="px-4 pt-3 pb-2.5 pl-5">
+                                    {/* Row 1: name + price */}
+                                    <div className="flex items-start justify-between gap-2 mb-2.5">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-bold text-ink leading-tight truncate pr-2">
+                                                {item.drug.name}
+                                            </p>
+                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                {item.drug.strength && <span>{item.drug.strength} · </span>}
+                                                <span className="font-semibold text-slate-500">₵{item.drug.unit_price.toFixed(2)}</span>
+                                                {" ea"}
+                                            </p>
+                                        </div>
+                                        <div className="text-right flex-shrink-0">
+                                            <p className="text-sm font-bold text-ink">
+                                                ₵{(item.drug.unit_price * item.quantity).toFixed(2)}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Row 2: qty + remove */}
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
+                                            <button
+                                                onClick={() => onSetQuantity(item.drug.id, item.quantity - 1)}
+                                                type="button"
+                                                className="w-8 h-8 flex items-center justify-center text-slate-500 hover:text-ink hover:bg-slate-100 transition-colors"
+                                            >
+                                                <Minus className="w-3 h-3" />
+                                            </button>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={1000}
+                                                value={item.quantity}
+                                                onChange={(e) =>
+                                                    onSetQuantity(item.drug.id, parseInt(e.target.value) || 1)
+                                                }
+                                                className="w-12 h-8 text-center text-sm font-bold bg-white border-x border-slate-200 focus:outline-none focus:bg-white"
+                                            />
+                                            <button
+                                                onClick={() => onSetQuantity(item.drug.id, item.quantity + 1)}
+                                                type="button"
+                                                className="w-8 h-8 flex items-center justify-center text-slate-500 hover:text-ink hover:bg-slate-100 transition-colors"
+                                            >
+                                                <Plus className="w-3 h-3" />
+                                            </button>
+                                        </div>
+
+                                        <button
+                                            onClick={() => onRemoveItem(item.drug.id)}
+                                            type="button"
+                                            className="text-xs text-slate-400 hover:text-red-500 transition-colors flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-red-50"
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                            Remove
+                                        </button>
+                                    </div>
+
+                                    {/* Rx badge */}
+                                    {item.requiresPrescription && (
+                                        <div className={`flex items-center gap-2 mt-2.5 px-3 py-2 rounded-lg text-xs border ${item.prescriptionVerified
+                                                ? "bg-green-50 border-green-100 text-green-700"
+                                                : "bg-violet-50 border-violet-100 text-violet-700"
+                                            }`}>
+                                            <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
+                                            <span className="flex-1 font-medium">Rx required</span>
+                                            <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={item.prescriptionVerified}
+                                                    onChange={(e) => onSetPrescriptionVerified(item.drug.id, e.target.checked)}
+                                                    className="w-3.5 h-3.5 rounded accent-green-600"
+                                                />
+                                                Verified
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         ))}
+
+                        {/* ── Divider into checkout form ── */}
+                        <div className="flex items-center gap-3 py-3">
+                            <div className="flex-1 h-px bg-slate-100" />
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Checkout</span>
+                            <div className="flex-1 h-px bg-slate-100" />
+                        </div>
+
+                        {/* ── Checkout form ── */}
+                        <div className="space-y-4 pb-4">
+
+                            {/* Price Contract */}
+                            <div>
+                                <SectionLabel icon={Tag}>Price Contract</SectionLabel>
+                                <div className="relative">
+                                    <select
+                                        value={contract?.id ?? ""}
+                                        onChange={(e) => {
+                                            const c = contracts.find((x) => x.id === e.target.value) ?? null;
+                                            onSetContract(c);
+                                        }}
+                                        disabled={contractsLoading}
+                                        className={`${inputCls} appearance-none pr-8 ${fieldError("contract") ? "border-red-300 bg-red-50/30" : ""}`}
+                                    >
+                                        {contractsLoading ? (
+                                            <option>Loading…</option>
+                                        ) : (
+                                            <>
+                                                <option value="">— Select contract —</option>
+                                                {contracts.map((c) => (
+                                                    <option key={c.id} value={c.id}>{c.display}</option>
+                                                ))}
+                                            </>
+                                        )}
+                                    </select>
+                                    <ChevronDown className="absolute right-3 top-3 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                                </div>
+                                {contract && (
+                                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${CONTRACT_TYPE_COLORS[contract.type] ?? "bg-slate-100 text-slate-600"}`}>
+                                            {contract.type.replace("_", " ").toUpperCase()}
+                                        </span>
+                                        {contract.discount_percentage > 0 && (
+                                            <span className="text-xs text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded-full">
+                                                {contract.discount_percentage}% off
+                                            </span>
+                                        )}
+                                        {contract.warning && (
+                                            <span className="text-xs text-amber-600 flex items-center gap-1">
+                                                <AlertCircle className="w-3 h-3" />{contract.warning}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+                                {fieldError("contract") && (
+                                    <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                                        <AlertCircle className="w-3 h-3" />{fieldError("contract")}
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Customer */}
+                            <div>
+                                <SectionLabel icon={User}>Customer</SectionLabel>
+                                <div className="relative">
+                                    <User className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
+                                    <input
+                                        value={customerName}
+                                        onChange={(e) => onSetCustomerName(e.target.value)}
+                                        placeholder="Walk-in customer name"
+                                        className={`${inputCls} pl-9 ${fieldError("customer") ? "border-red-300 bg-red-50/30" : ""}`}
+                                    />
+                                </div>
+                                {fieldError("customer") && (
+                                    <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                                        <AlertCircle className="w-3 h-3" />{fieldError("customer")}
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Prescription ID */}
+                            {hasRxItems && (
+                                <div>
+                                    <SectionLabel icon={FileText}>Prescription ID</SectionLabel>
+                                    <div className="relative">
+                                        <FileText className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
+                                        <input
+                                            value={prescriptionId ?? ""}
+                                            onChange={(e) => onSetPrescriptionId(e.target.value || null)}
+                                            placeholder="Prescription reference number"
+                                            className={`${inputCls} pl-9 ${fieldError("prescription_id") ? "border-red-300 bg-red-50/30" : ""}`}
+                                        />
+                                    </div>
+                                    {fieldError("prescription_id") && (
+                                        <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                                            <AlertCircle className="w-3 h-3" />{fieldError("prescription_id")}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Insurance */}
+                            {isInsurance && (
+                                <div className="space-y-2.5 p-3.5 rounded-xl bg-blue-50 border border-blue-100">
+                                    <p className="text-[11px] font-bold text-blue-700 uppercase tracking-widest">Insurance Details</p>
+                                    <input
+                                        value={insuranceClaimNumber}
+                                        onChange={(e) => onSetInsuranceClaimNumber(e.target.value)}
+                                        placeholder="Claim number *"
+                                        className={`${inputCls} border-blue-200 bg-white ${fieldError("insurance_claim") ? "border-red-300" : ""}`}
+                                    />
+                                    <input
+                                        value={insurancePreAuthNumber}
+                                        onChange={(e) => onSetInsurancePreAuthNumber(e.target.value)}
+                                        placeholder="Pre-auth number (optional)"
+                                        className={`${inputCls} border-blue-200 bg-white`}
+                                    />
+                                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                                        <input
+                                            type="checkbox"
+                                            checked={insuranceVerified}
+                                            onChange={(e) => onSetInsuranceVerified(e.target.checked)}
+                                            className="w-4 h-4 rounded accent-blue-600"
+                                        />
+                                        <span className="text-sm font-semibold text-blue-700">Card verified ✓</span>
+                                    </label>
+                                    {fieldError("insurance") && <p className="text-xs text-red-500">{fieldError("insurance")}</p>}
+                                </div>
+                            )}
+
+                            {/* Payment method */}
+                            <div>
+                                <SectionLabel icon={Banknote}>Payment Method</SectionLabel>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                    {PAYMENT_METHODS.map((m) => (
+                                        <button
+                                            key={m.value}
+                                            onClick={() => onSetPaymentMethod(m.value)}
+                                            type="button"
+                                            className={`py-2 text-xs font-semibold rounded-lg border transition-all ${paymentMethod === m.value
+                                                    ? "bg-brand-600 border-brand-600 text-white shadow-sm"
+                                                    : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                                                }`}
+                                        >
+                                            {m.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Amount tendered */}
+                            {(paymentMethod === "cash" || paymentMethod === "split") && (
+                                <div>
+                                    <SectionLabel icon={Banknote}>Amount Tendered (GHS)</SectionLabel>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-2.5 text-sm font-semibold text-slate-400">₵</span>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step="0.01"
+                                            value={amountPaid || ""}
+                                            onChange={(e) => onSetAmountPaid(parseFloat(e.target.value) || 0)}
+                                            placeholder={totals.total.toFixed(2)}
+                                            className={`${inputCls} pl-7 ${fieldError("amount_paid") ? "border-red-300 bg-red-50/30" : ""}`}
+                                        />
+                                    </div>
+                                    {fieldError("amount_paid") && (
+                                        <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                                            <AlertCircle className="w-3 h-3" />{fieldError("amount_paid")}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Notes */}
+                            <div>
+                                <SectionLabel icon={Receipt}>Notes (optional)</SectionLabel>
+                                <input
+                                    value={notes}
+                                    onChange={(e) => onSetNotes(e.target.value)}
+                                    placeholder="Any notes about this sale…"
+                                    className={inputCls}
+                                />
+                            </div>
+                        </div>
                     </div>
                 )}
+            </div>
 
-                {/* Action buttons */}
-                <div className="flex gap-2">
-                    {items.length > 0 && (
-                        <button
-                            onClick={onClearCart}
-                            type="button"
-                            className="px-3 py-2.5 text-sm font-medium text-ink-secondary border border-slate-200 bg-white hover:bg-slate-50 rounded-xl transition-colors"
-                        >
-                            Clear
-                        </button>
+            {/* ═══ STICKY FOOTER ═══ */}
+            {!isEmpty && (
+                <div className="flex-shrink-0 border-t border-slate-200 bg-white px-5 pt-3.5 pb-5">
+
+                    {/* Totals */}
+                    <div className="space-y-1.5 mb-3">
+                        <div className="flex justify-between text-xs text-slate-500">
+                            <span>Subtotal ({totals.itemCount} {totals.itemCount === 1 ? "item" : "items"})</span>
+                            <span className="font-medium">₵{totals.subtotal.toFixed(2)}</span>
+                        </div>
+                        {totals.discountAmount > 0 && (
+                            <div className="flex justify-between text-xs text-green-600 font-medium">
+                                <span>Discount ({contract?.discount_percentage}%)</span>
+                                <span>−₵{totals.discountAmount.toFixed(2)}</span>
+                            </div>
+                        )}
+                        {totals.taxAmount > 0 && (
+                            <div className="flex justify-between text-xs text-slate-500">
+                                <span>Tax</span>
+                                <span className="font-medium">₵{totals.taxAmount.toFixed(2)}</span>
+                            </div>
+                        )}
+                        <div className="flex justify-between items-baseline pt-2 border-t border-slate-100">
+                            <span className="text-sm font-bold text-ink">Total</span>
+                            <span className="text-xl font-bold text-ink">₵{totals.total.toFixed(2)}</span>
+                        </div>
+                        {amountPaid > 0 && totals.change > 0 && (
+                            <div className="flex justify-between text-sm font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2 mt-1">
+                                <span>Change due</span>
+                                <span>₵{totals.change.toFixed(2)}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Validation errors — compact */}
+                    {hasErrors && (
+                        <div className="rounded-xl bg-red-50 border border-red-100 px-3 py-2.5 mb-3 space-y-1">
+                            {validationErrors.map((e) => (
+                                <p key={e.field} className="text-xs text-red-600 flex items-start gap-1.5">
+                                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                                    {e.message}
+                                </p>
+                            ))}
+                        </div>
                     )}
+
+                    {/* CTA */}
                     <button
                         onClick={onCheckout}
-                        disabled={isSubmitting || items.length === 0}
+                        disabled={isSubmitting}
                         type="button"
-                        className="flex-1 py-2.5 text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full py-3.5 text-sm font-bold text-white rounded-xl transition-all
+                            bg-brand-600 hover:bg-brand-700 active:scale-[0.99]
+                            disabled:opacity-50 disabled:cursor-not-allowed
+                            flex items-center justify-center gap-2 shadow-sm"
                     >
                         {isSubmitting ? (
                             <>
@@ -437,13 +510,11 @@ export function CartPanel({
                                 Processing…
                             </>
                         ) : (
-                            <>
-                                Complete Sale · ₵{totals.total.toFixed(2)}
-                            </>
+                            `Complete Sale · ₵${totals.total.toFixed(2)}`
                         )}
                     </button>
                 </div>
-            </div>
+            )}
         </div>
     );
 }
