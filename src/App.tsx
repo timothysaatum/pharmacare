@@ -12,6 +12,8 @@ import InventoryPage from "@/pages/InventoryPage";
 import POSPage from "@/pages/POSPage";
 import ContractsPage from "@/pages/ContractsPage";
 import CustomersPage from "@/pages/CustomersPage";
+import PurchasesPage from "@/pages/PurchasesPage";
+import SalesHistoryPage from "@/pages/SalesHistoryPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -65,7 +67,6 @@ function SyncGate({ children }: { children: React.ReactNode }) {
       return;
     }
 
-  
     const currentStatus = syncEngine.status;
     if (
       currentStatus === "idle" ||
@@ -186,7 +187,11 @@ function AppRoutes() {
         />
         <Route
           path="/purchases"
-          element={<RequireAuth><AppShell><ComingSoon label="Purchases" /></AppShell></RequireAuth>}
+          element={<RequireAuth><AppShell><PurchasesPage /></AppShell></RequireAuth>}
+        />
+        <Route
+          path="/sales"
+          element={<RequireAuth><AppShell><SalesHistoryPage /></AppShell></RequireAuth>}
         />
         <Route
           path="/reports"

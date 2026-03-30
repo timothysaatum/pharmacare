@@ -96,8 +96,8 @@ apiClient.interceptors.response.use(
 );
 
 // ── Typed helpers ─────────────────────────────────────────
-export async function get<T>(url: string, config?: { signal?: AbortSignal }): Promise<T> {
-    const { data } = await apiClient.get<T>(url, { signal: config?.signal });
+export async function get<T>(url: string, config?: { signal?: AbortSignal; params?: Record<string, unknown> }): Promise<T> {
+    const { data } = await apiClient.get<T>(url, { signal: config?.signal, params: config?.params });
     return data;
 }
 

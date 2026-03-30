@@ -13,15 +13,16 @@
  * This avoids ALL nested-flex height issues by having only ONE scroll container.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     Trash2, Plus, Minus, ShieldAlert, ChevronDown,
     User, FileText, AlertCircle, ShoppingCart, Package,
-    Receipt, Banknote, Tag,
+    Receipt, Banknote, Tag, Search, UserCheck, X, Loader2,
 } from "lucide-react";
 import type { AvailableContract } from "@/api/contracts";
 import { PaymentMethod } from "@/types";
 import { CartItem, CartTotals, CartValidationError } from "@/hooks/useCart";
+import { apiClient } from "@/api/client";
 
 const CONTRACT_TYPE_COLORS: Record<string, string> = {
     standard: "bg-slate-100 text-slate-600",
@@ -41,6 +42,176 @@ const PAYMENT_METHODS: Array<{ value: PaymentMethod; label: string }> = [
     { value: "credit", label: "Credit" },
     { value: "split", label: "Split" },
 ];
+
+// ─── Customer Search ─────────────────────────────────────────────────────────
+
+interface CustomerMatch {
+    id: string;
+    full_name: string;
+    phone: string | null;
+    email: string | null;
+    loyalty_tier: string | null;
+    has_insurance: boolean;
+    contract_name: string | null;
+}
+
+interface CustomerSearchWidgetProps {
+    customerName: string;
+    customerId: string | null;
+    // onSetCustomerId: (id: string | null) => void;
+    onSetCustomerName: (name: string) => void;
+    onSetCustomerId: (id: string | null) => void;
+    fieldError?: string;
+}
+
+function CustomerSearchWidget({
+    customerName, customerId, onSetCustomerName, onSetCustomerId, fieldError,
+}: CustomerSearchWidgetProps) {
+    const [query, setQuery] = useState("");
+    const [results, setResults] = useState<CustomerMatch[]>([]);
+    const [searching, setSearching] = useState(false);
+    const [open, setOpen] = useState(false);
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const wrapperRef = useRef<HTMLDivElement>(null);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+                setOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, []);
+
+    const search = (q: string) => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        if (q.length < 2) { setResults([]); setOpen(false); return; }
+        debounceRef.current = setTimeout(async () => {
+            setSearching(true);
+            try {
+                const { data } = await apiClient.get<{ matches: CustomerMatch[] }>(
+                    "/customers/search",
+                    { params: { q, limit: 10 } }
+                );
+                setResults(data.matches ?? []);
+                setOpen(true);
+            } catch {
+                setResults([]);
+            } finally {
+                setSearching(false);
+            }
+        }, 300);
+    };
+
+    const selectCustomer = (c: CustomerMatch) => {
+        onSetCustomerId(c.id);
+        onSetCustomerName(c.full_name);
+        setQuery("");
+        setResults([]);
+        setOpen(false);
+    };
+
+    const clearCustomer = () => {
+        onSetCustomerId(null);
+        onSetCustomerName("");
+        setQuery("");
+        setResults([]);
+    };
+
+    // If a registered customer is selected, show their card
+    if (customerId) {
+        return (
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-brand-50 border border-brand-100">
+                <UserCheck className="w-4 h-4 text-brand-600 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-brand-700 truncate">{customerName}</p>
+                    <p className="text-[10px] text-brand-500">Registered customer</p>
+                </div>
+                <button
+                    type="button"
+                    onClick={clearCustomer}
+                    className="p-1 rounded text-brand-400 hover:text-brand-700 hover:bg-brand-100 transition-colors"
+                    title="Remove customer"
+                >
+                    <X className="w-3.5 h-3.5" />
+                </button>
+            </div>
+        );
+    }
+
+    return (
+        <div ref={wrapperRef} className="space-y-2">
+            {/* Search input */}
+            <div className="relative">
+                <Search className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
+                <input
+                    value={query}
+                    onChange={(e) => { setQuery(e.target.value); search(e.target.value); }}
+                    placeholder="Search by name, phone, email…"
+                    className={`${inputCls} pl-9 pr-8 ${fieldError ? "border-red-300 bg-red-50/30" : ""}`}
+                />
+                {searching && (
+                    <Loader2 className="absolute right-3 top-3 w-3.5 h-3.5 text-slate-400 animate-spin" />
+                )}
+            </div>
+
+            {/* Walk-in name (when no registered customer selected) */}
+            {!query && (
+                <div className="relative">
+                    <User className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                        value={customerName}
+                        onChange={(e) => onSetCustomerName(e.target.value)}
+                        placeholder="Or type walk-in customer name"
+                        className={`${inputCls} pl-9 ${fieldError ? "border-red-300 bg-red-50/30" : ""}`}
+                    />
+                </div>
+            )}
+
+            {/* Dropdown results */}
+            {open && results.length > 0 && (
+                <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden max-h-52 overflow-y-auto">
+                    {results.map((c) => (
+                        <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => selectCustomer(c)}
+                            className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors"
+                        >
+                            <UserCheck className="w-4 h-4 text-brand-500 flex-shrink-0 mt-0.5" />
+                            <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-ink truncate">{c.full_name}</p>
+                                <p className="text-xs text-slate-400 truncate">
+                                    {[c.phone, c.email].filter(Boolean).join(" · ")}
+                                    {c.loyalty_tier && (
+                                        <span className="ml-1.5 capitalize font-medium text-amber-600">
+                                            {c.loyalty_tier}
+                                        </span>
+                                    )}
+                                    {c.has_insurance && (
+                                        <span className="ml-1.5 text-blue-600 font-medium">Insurance</span>
+                                    )}
+                                </p>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {open && query.length >= 2 && results.length === 0 && !searching && (
+                <p className="text-xs text-slate-400 px-1">No customers found — sale will be recorded as walk-in</p>
+            )}
+
+            {fieldError && (
+                <p className="text-xs text-red-500 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />{fieldError}
+                </p>
+            )}
+        </div>
+    );
+}
 
 interface CartPanelProps {
     items: CartItem[];
@@ -64,6 +235,7 @@ interface CartPanelProps {
     onRemoveItem: (drugId: string) => void;
     onSetPrescriptionVerified: (drugId: string, verified: boolean) => void;
     onSetContract: (contract: AvailableContract | null) => void;
+    onSetCustomerId: (id: string | null) => void;
     onSetCustomerName: (name: string) => void;
     onSetPaymentMethod: (method: PaymentMethod) => void;
     onSetAmountPaid: (amount: number) => void;
@@ -80,7 +252,6 @@ const inputCls =
     "w-full h-10 px-3 rounded-lg border border-slate-200 text-sm text-ink bg-white " +
     "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-colors";
 
-const labelCls = "block text-[11px] font-semibold text-ink-muted uppercase tracking-widest mb-1.5";
 
 function SectionLabel({ icon: Icon, children }: { icon: React.ElementType; children: React.ReactNode }) {
     return (
@@ -93,11 +264,11 @@ function SectionLabel({ icon: Icon, children }: { icon: React.ElementType; child
 
 export function CartPanel({
     items, contract, contracts, contractsLoading,
-    customerName, paymentMethod, amountPaid,
+    customerName, customerId, paymentMethod, amountPaid,
     prescriptionId, insuranceClaimNumber, insurancePreAuthNumber,
     insuranceVerified, notes, totals, validationErrors,
     isSubmitting, onSetQuantity, onRemoveItem, onSetPrescriptionVerified,
-    onSetContract, onSetCustomerName, onSetPaymentMethod, onSetAmountPaid,
+    onSetContract, onSetCustomerId, onSetCustomerName, onSetPaymentMethod, onSetAmountPaid,
     onSetPrescriptionId, onSetInsuranceClaimNumber, onSetInsurancePreAuthNumber,
     onSetInsuranceVerified, onSetNotes, onCheckout, onClearCart,
 }: CartPanelProps) {
@@ -237,8 +408,8 @@ export function CartPanel({
                                     {/* Rx badge */}
                                     {item.requiresPrescription && (
                                         <div className={`flex items-center gap-2 mt-2.5 px-3 py-2 rounded-lg text-xs border ${item.prescriptionVerified
-                                                ? "bg-green-50 border-green-100 text-green-700"
-                                                : "bg-violet-50 border-violet-100 text-violet-700"
+                                            ? "bg-green-50 border-green-100 text-green-700"
+                                            : "bg-violet-50 border-violet-100 text-violet-700"
                                             }`}>
                                             <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
                                             <span className="flex-1 font-medium">Rx required</span>
@@ -318,37 +489,42 @@ export function CartPanel({
                             </div>
 
                             {/* Customer */}
-                            <div>
+                            <div className="relative">
                                 <SectionLabel icon={User}>Customer</SectionLabel>
-                                <div className="relative">
-                                    <User className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
-                                    <input
-                                        value={customerName}
-                                        onChange={(e) => onSetCustomerName(e.target.value)}
-                                        placeholder="Walk-in customer name"
-                                        className={`${inputCls} pl-9 ${fieldError("customer") ? "border-red-300 bg-red-50/30" : ""}`}
-                                    />
-                                </div>
-                                {fieldError("customer") && (
-                                    <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
-                                        <AlertCircle className="w-3 h-3" />{fieldError("customer")}
-                                    </p>
-                                )}
+                                <CustomerSearchWidget
+                                    customerName={customerName}
+                                    customerId={customerId}
+                                    onSetCustomerName={onSetCustomerName}
+                                    onSetCustomerId={onSetCustomerId}
+                                    fieldError={fieldError("customer")}
+                                />
                             </div>
 
                             {/* Prescription ID */}
                             {hasRxItems && (
                                 <div>
-                                    <SectionLabel icon={FileText}>Prescription ID</SectionLabel>
+                                    <SectionLabel icon={FileText}>Prescription</SectionLabel>
+                                    {!customerId && (
+                                        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-100 mb-2">
+                                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                                            <p className="text-xs text-amber-700">
+                                                A <strong>registered customer</strong> must be selected above before linking a prescription.
+                                            </p>
+                                        </div>
+                                    )}
                                     <div className="relative">
                                         <FileText className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
                                         <input
                                             value={prescriptionId ?? ""}
                                             onChange={(e) => onSetPrescriptionId(e.target.value || null)}
-                                            placeholder="Prescription reference number"
-                                            className={`${inputCls} pl-9 ${fieldError("prescription_id") ? "border-red-300 bg-red-50/30" : ""}`}
+                                            placeholder="Prescription UUID from patient record"
+                                            disabled={!customerId}
+                                            className={`${inputCls} pl-9 font-mono text-xs ${!customerId ? "opacity-50 cursor-not-allowed bg-slate-50" : ""} ${fieldError("prescription_id") ? "border-red-300 bg-red-50/30" : ""}`}
                                         />
                                     </div>
+                                    <p className="text-[10px] text-slate-400 mt-1.5">
+                                        The prescription must be active, have refills remaining, and belong to the selected customer.
+                                    </p>
                                     {fieldError("prescription_id") && (
                                         <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
                                             <AlertCircle className="w-3 h-3" />{fieldError("prescription_id")}
@@ -396,8 +572,8 @@ export function CartPanel({
                                             onClick={() => onSetPaymentMethod(m.value)}
                                             type="button"
                                             className={`py-2 text-xs font-semibold rounded-lg border transition-all ${paymentMethod === m.value
-                                                    ? "bg-brand-600 border-brand-600 text-white shadow-sm"
-                                                    : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                                                ? "bg-brand-600 border-brand-600 text-white shadow-sm"
+                                                : "bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
                                                 }`}
                                         >
                                             {m.label}

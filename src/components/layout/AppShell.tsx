@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
     Pill, Package, ShoppingCart, Users, BarChart2,
-    LogOut, Building2, Menu, X, FileText, ScrollText
+    LogOut, Building2, Menu, X, ScrollText, ShoppingBag, Receipt,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { branchApi } from "@/api/branches";
@@ -19,10 +19,21 @@ const NAV_ITEMS: NavItem[] = [
     { to: "/drugs", icon: Pill, label: "Drugs" },
     { to: "/inventory", icon: Package, label: "Inventory" },
     { to: "/pos", icon: ShoppingCart, label: "Point of Sale" },
+    { to: "/sales", icon: Receipt, label: "Sales History" },
     { to: "/customers", icon: Users, label: "Customers" },
     { to: "/contracts", icon: ScrollText, label: "Contracts" },
-    { to: "/purchases", icon: FileText, label: "Purchases", roles: ["admin", "manager", "super_admin"] },
-    { to: "/reports", icon: BarChart2, label: "Reports", roles: ["admin", "manager", "super_admin"] },
+    {
+        to: "/purchases",
+        icon: ShoppingBag,
+        label: "Purchases",
+        roles: ["admin", "manager", "super_admin"],
+    },
+    {
+        to: "/reports",
+        icon: BarChart2,
+        label: "Reports",
+        roles: ["admin", "manager", "super_admin"],
+    },
 ];
 
 const ROLE_LABELS: Record<string, string> = {
@@ -87,7 +98,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         <Pill className="w-4 h-4 text-white" />
                     </div>
                     {!collapsed && (
-                        <span className="font-display font-bold text-sm flex-1 truncate">Pharmacare</span>
+                        <span className="font-display font-bold text-sm flex-1 truncate">
+                            Pharmacare
+                        </span>
                     )}
                     <button
                         onClick={() => setCollapsed((c) => !c)}
@@ -101,7 +114,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {!collapsed && activeBranchId && (
                     <div className="mx-3 mt-3 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
                         <Building2 className="w-3 h-3 text-white/40 flex-shrink-0" />
-                        <span className="text-xs text-white/60 truncate" title={branchName ?? undefined}>
+                        <span
+                            className="text-xs text-white/60 truncate"
+                            title={branchName ?? undefined}
+                        >
                             {branchName ?? "Loading…"}
                         </span>
                     </div>

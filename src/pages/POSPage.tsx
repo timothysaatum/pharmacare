@@ -321,6 +321,7 @@ export default function POSPage() {
                         onRemoveItem={cart.removeItem}
                         onSetPrescriptionVerified={cart.setPrescriptionVerified}
                         onSetContract={cart.setContract}
+                        onSetCustomerId={cart.setCustomerId}
                         onSetCustomerName={cart.setCustomerName}
                         onSetPaymentMethod={cart.setPaymentMethod}
                         onSetAmountPaid={cart.setAmountPaid}

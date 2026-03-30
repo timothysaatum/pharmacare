@@ -371,9 +371,6 @@ export interface Drug extends TimestampFields, SyncFields, SoftDeleteFields {
     ndc_code: string | null;
     requires_prescription: boolean;
     controlled_substance_schedule: string | null;
-    // FIX: numeric fields are always numbers from the API (Pydantic serialises
-    // Numeric columns as JSON numbers, never strings). The old `number | string`
-    // unions forced every consumer to guard before arithmetic.
     unit_price: number;
     cost_price: number | null;
     markup_percentage: number | null;
@@ -933,17 +930,80 @@ export interface Prescription extends TimestampFields, SyncFields {
     verified_at: string | null;
 }
 
+// // ============================================================
+// // SUPPLIER / PURCHASE ORDER TYPES
+// // ============================================================
+
+// export type PurchaseOrderStatus =
+//     | "draft"
+//     | "pending"
+//     | "approved"
+//     | "ordered"
+//     | "received"
+//     | "cancelled";
+
+// export interface Supplier extends TimestampFields, SyncFields, SoftDeleteFields {
+//     id: string;
+//     organization_id: string;
+//     name: string;
+//     contact_person: string | null;
+//     phone: string | null;
+//     email: string | null;
+//     address: OrgAddress | null;
+//     tax_id: string | null;
+//     payment_terms: string | null;
+//     credit_limit: number | null;
+//     rating: number | null;
+//     total_orders: number;
+//     total_value: number;
+//     is_active: boolean;
+// }
+
+// export interface PurchaseOrderItem extends TimestampFields {
+//     id: string;
+//     purchase_order_id: string;
+//     drug_id: string;
+//     quantity_ordered: number;
+//     quantity_received: number;
+//     unit_cost: number;
+//     total_cost: number;
+//     batch_number: string | null;
+//     expiry_date: string | null;
+// }
+
+// export interface PurchaseOrder extends TimestampFields, SyncFields {
+//     id: string;
+//     organization_id: string;
+//     branch_id: string;
+//     po_number: string;
+//     supplier_id: string;
+//     subtotal: number;
+//     tax_amount: number;
+//     shipping_cost: number;
+//     total_amount: number;
+//     status: PurchaseOrderStatus;
+//     ordered_by: string;
+//     approved_by: string | null;
+//     approved_at: string | null;
+//     expected_delivery_date: string | null;
+//     received_date: string | null;
+//     notes: string | null;
+//     items: PurchaseOrderItem[];
+// }
 // ============================================================
-// SUPPLIER / PURCHASE ORDER TYPES
+// PURCHASE ORDER TYPES  (drop-in replacement for the
+// SUPPLIER / PURCHASE ORDER TYPES section in index.ts)
 // ============================================================
 
 export type PurchaseOrderStatus =
     | "draft"
     | "pending"
     | "approved"
-    | "ordered"
-    | "received"
-    | "cancelled";
+    | "ordered"       // partially received
+    | "received"      // fully received
+    | "cancelled";    // rejected or manually cancelled
+
+// ── Supplier ─────────────────────────────────────────────────
 
 export interface Supplier extends TimestampFields, SyncFields, SoftDeleteFields {
     id: string;
@@ -954,6 +1014,7 @@ export interface Supplier extends TimestampFields, SyncFields, SoftDeleteFields 
     email: string | null;
     address: OrgAddress | null;
     tax_id: string | null;
+    registration_number: string | null;
     payment_terms: string | null;
     credit_limit: number | null;
     rating: number | null;
@@ -961,6 +1022,34 @@ export interface Supplier extends TimestampFields, SyncFields, SoftDeleteFields 
     total_value: number;
     is_active: boolean;
 }
+
+export interface SupplierCreate {
+    organization_id: string;
+    name: string;
+    contact_person?: string;
+    phone?: string;
+    email?: string;
+    address?: OrgAddress;
+    tax_id?: string;
+    registration_number?: string;
+    payment_terms?: string;
+    credit_limit?: number;
+}
+
+export interface SupplierUpdate {
+    name?: string;
+    contact_person?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    address?: OrgAddress | null;
+    tax_id?: string | null;
+    registration_number?: string | null;
+    payment_terms?: string | null;
+    credit_limit?: number | null;
+    is_active?: boolean;
+}
+
+// ── Purchase Order Items ──────────────────────────────────────
 
 export interface PurchaseOrderItem extends TimestampFields {
     id: string;
@@ -971,8 +1060,26 @@ export interface PurchaseOrderItem extends TimestampFields {
     unit_cost: number;
     total_cost: number;
     batch_number: string | null;
-    expiry_date: string | null;
+    expiry_date: string | null;          // ISO date string (YYYY-MM-DD)
+    /** Computed by server: quantity_received >= quantity_ordered */
+    is_fully_received: boolean;
+    /** Computed by server: max(0, quantity_ordered - quantity_received) */
+    remaining_quantity: number;
 }
+
+export interface PurchaseOrderItemWithDetails extends PurchaseOrderItem {
+    drug_name: string;
+    drug_sku: string | null;
+    drug_generic_name: string | null;
+}
+
+export interface PurchaseOrderItemCreate {
+    drug_id: string;
+    quantity_ordered: number;            // must be > 0
+    unit_cost: number;                   // must be > 0
+}
+
+// ── Purchase Order ────────────────────────────────────────────
 
 export interface PurchaseOrder extends TimestampFields, SyncFields {
     id: string;
@@ -991,7 +1098,118 @@ export interface PurchaseOrder extends TimestampFields, SyncFields {
     expected_delivery_date: string | null;
     received_date: string | null;
     notes: string | null;
-    items: PurchaseOrderItem[];
+}
+
+export interface PurchaseOrderWithDetails extends PurchaseOrder {
+    items: PurchaseOrderItemWithDetails[];
+    supplier_name: string;
+    branch_name: string;
+    ordered_by_name: string;
+    approved_by_name: string | null;
+    /** Server-computed: all items fully received */
+    is_fully_received: boolean;
+    /** Server-computed: count of fully received items */
+    total_items_received: number;
+    /** Server-computed: e.g. "3 / 5 items received" */
+    receipt_progress: string;
+}
+
+export interface PurchaseOrderCreate {
+    branch_id: string;
+    supplier_id: string;
+    items: PurchaseOrderItemCreate[];    // at least 1 required
+    expected_delivery_date?: string;     // ISO date string
+    shipping_cost?: number;
+    notes?: string;
+}
+
+export interface PurchaseOrderUpdate {
+    supplier_id?: string;
+    expected_delivery_date?: string | null;
+    shipping_cost?: number;
+    notes?: string | null;
+}
+
+// ── Workflow action payloads ──────────────────────────────────
+
+export interface PurchaseOrderSubmit {
+    notes?: string;
+}
+
+export interface PurchaseOrderApprove {
+    notes?: string;
+}
+
+export interface PurchaseOrderReject {
+    reason: string;                      // required, max 500 chars
+}
+
+export interface PurchaseOrderCancel {
+    reason: string;                      // required, max 500 chars
+}
+
+// ── Receiving ─────────────────────────────────────────────────
+
+export interface ReceiveItemData {
+    purchase_order_item_id: string;
+    quantity_received: number;           // must be > 0
+    batch_number: string;
+    manufacturing_date?: string;         // ISO date string (optional)
+    expiry_date: string;                 // ISO date string — must be future
+}
+
+export interface ReceivePurchaseOrder {
+    received_date?: string;              // ISO date string, defaults to today
+    items: ReceiveItemData[];            // at least 1 required
+    notes?: string;
+}
+
+export interface ReceivePurchaseOrderResponse {
+    purchase_order: PurchaseOrderWithDetails;
+    batches_created: number;
+    inventory_updated: number;
+    success: boolean;
+    message: string;
+}
+
+// ── Filtering & Reporting ─────────────────────────────────────
+
+export interface PurchaseOrderFilters {
+    status?: PurchaseOrderStatus;
+    supplier_id?: string;
+    branch_id?: string;
+    start_date?: string;
+    end_date?: string;
+    min_amount?: number;
+    max_amount?: number;
+    ordered_by?: string;
+}
+
+export interface SupplierPerformance {
+    supplier_id: string;
+    supplier_name: string;
+    total_orders: number;
+    total_value: number;
+    average_order_value: number;
+    on_time_deliveries: number;
+    late_deliveries: number;
+    /** 0–100 */
+    on_time_rate: number;
+    rating: number | null;
+}
+
+export interface PurchaseSummary {
+    total_orders: number;
+    total_value: number;
+    average_order_value: number;
+    draft: number;
+    pending_approval: number;
+    approved: number;
+    pending_delivery: number;
+    received: number;
+    cancelled: number;
+    start_date: string;
+    end_date: string;
 }
 
 // ============================================================
