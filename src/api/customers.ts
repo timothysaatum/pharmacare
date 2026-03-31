@@ -24,7 +24,15 @@ export interface CustomerWithDetails extends Customer {
     insurance_provider_code: string | null;
     preferred_contract_name: string | null;
     preferred_contract_discount: number | null;
+    /**
+     * Aliased from total_orders on the backend schema.
+     * Use this for displaying purchase count in the UI.
+     */
     total_purchases: number;
+    /**
+     * Aliased from total_value on the backend schema.
+     * Use this for displaying total spend in the UI.
+     */
     total_spent: number;
     last_purchase_date: string | null;
 }
@@ -101,6 +109,7 @@ export interface CustomerUpdate {
     preferred_contract_id?: string;
     preferred_contact_method?: "email" | "phone" | "sms";
     marketing_consent?: boolean;
+    is_active?: boolean;
 }
 
 export interface CustomerListParams {

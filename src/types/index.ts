@@ -673,6 +673,10 @@ export interface Customer extends TimestampFields, SyncFields, SoftDeleteFields 
     chronic_conditions: string[];
     loyalty_points: number;
     loyalty_tier: LoyaltyTier;
+    /** Denormalized: total completed sales count, kept in sync by SalesService */
+    total_orders: number;
+    /** Denormalized: cumulative spend in GHS, kept in sync by SalesService */
+    total_value: number;
     preferred_contact_method: "email" | "phone" | "sms";
     marketing_consent: boolean;
     is_active: boolean;

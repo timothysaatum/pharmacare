@@ -67,6 +67,7 @@ export default function CustomersPage() {
     const [editingCustomer, setEditingCustomer] = useState<CustomerWithDetails | null>(null);
     const [detailCustomer, setDetailCustomer] = useState<CustomerWithDetails | null>(null);
     const [togglingId, setTogglingId] = useState<string | null>(null);
+    const [detailLoading, setDetailLoading] = useState(false);
 
     const abortRef = useRef<AbortController | null>(null);
 
@@ -109,11 +110,15 @@ export default function CustomersPage() {
     // ── Toggle active ──────────────────────────────────────────────────────────
     const handleToggleActive = async (customer: CustomerWithDetails) => {
         setTogglingId(customer.id);
+        // Optimistically flip the flag in the list immediately
+        setCustomers((prev) => prev.map((c) => c.id === customer.id ? { ...c, is_active: !c.is_active } : c));
         try {
-            const updated = await customersApi.update(customer.id, {});
-            setCustomers((prev) => prev.map((c) => c.id === customer.id ? { ...c, is_active: !c.is_active } : c));
-        } catch (err) { setError(parseApiError(err)); }
-        finally { setTogglingId(null); }
+            await customersApi.update(customer.id, { is_active: !customer.is_active });
+        } catch (err) {
+            // Revert on failure
+            setCustomers((prev) => prev.map((c) => c.id === customer.id ? { ...c, is_active: customer.is_active } : c));
+            setError(parseApiError(err));
+        } finally { setTogglingId(null); }
     };
 
     const handleSaved = (saved: CustomerWithDetails) => {
@@ -125,6 +130,22 @@ export default function CustomersPage() {
         setTotal((t) => showCreate ? t + 1 : t);
         setShowCreate(false);
         setEditingCustomer(null);
+    };
+
+    // Always fetch the full CustomerWithDetails (with purchase stats) when
+    // opening the drawer — the list endpoint returns the base Customer shape
+    // which lacks total_purchases, total_spent, last_purchase_date etc.
+    const openDetail = async (c: CustomerWithDetails) => {
+        setDetailCustomer(c); // show drawer immediately with list data
+        setDetailLoading(true);
+        try {
+            const full = await customersApi.getById(c.id);
+            setDetailCustomer(full);
+        } catch {
+            // Non-blocking — drawer still shows with list data
+        } finally {
+            setDetailLoading(false);
+        }
     };
 
     const fullName = (c: Customer) => {
@@ -233,7 +254,7 @@ export default function CustomersPage() {
                                             initial={{ opacity: 0 }}
                                             animate={{ opacity: 1 }}
                                             className={`hover:bg-slate-50/70 transition-colors group cursor-pointer ${!c.is_active ? "opacity-60" : ""}`}
-                                            onClick={() => setDetailCustomer(c)}
+                                            onClick={() => openDetail(c)}
                                         >
                                             {/* Name */}
                                             <td className="px-5 py-3">
@@ -402,7 +423,10 @@ export default function CustomersPage() {
 
                                 {/* Purchase stats */}
                                 <div className="rounded-xl bg-brand-50 border border-brand-100 p-3">
-                                    <p className="text-xs font-semibold text-brand-700 mb-2 flex items-center gap-1"><ShoppingBag className="w-3.5 h-3.5" />Purchase History</p>
+                                    <p className="text-xs font-semibold text-brand-700 mb-2 flex items-center gap-1">
+                                        <ShoppingBag className="w-3.5 h-3.5" />Purchase History
+                                        {detailLoading && <RefreshCw className="w-3 h-3 ml-auto animate-spin text-brand-400" />}
+                                    </p>
                                     <div className="grid grid-cols-2 gap-2">
                                         <div>
                                             <p className="text-xl font-bold text-brand-700">{detailCustomer.total_purchases ?? 0}</p>
