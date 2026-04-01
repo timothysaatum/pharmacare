@@ -17,6 +17,11 @@ import { POStatusBadge } from "./POStatusBadge";
 import { ReceiveGoodsModal } from "./ReceiveGoodsModal";
 import type { PurchaseOrderWithDetails, PurchaseOrderItemWithDetails, User } from "@/types";
 import { useAuthStore } from "@/stores/authStore";
+// Python Decimal serialises to a JSON string — always coerce with Number()
+// before calling .toFixed() so the panel never crashes on string values.
+function fmtGHS(value: number | string | null | undefined): string {
+    return `₵${Number(value ?? 0).toFixed(2)}`;
+}
 
 // ─── Permission helper ────────────────────────────────────────────────────────
 //
@@ -97,8 +102,8 @@ function ItemRow({ item }: { item: PurchaseOrderItemWithDetails }) {
                     )}
                 </div>
                 <div className="text-right flex-shrink-0">
-                    <p className="text-sm font-bold text-ink">₵{item.total_cost.toFixed(2)}</p>
-                    <p className="text-xs text-slate-400">₵{item.unit_cost.toFixed(2)} ea</p>
+                    <p className="text-sm font-bold text-ink">{fmtGHS(item.total_cost)}</p>
+                    <p className="text-xs text-slate-400">{fmtGHS(item.unit_cost)} ea</p>
                 </div>
             </div>
 
@@ -212,17 +217,17 @@ export function PurchaseOrderDetailPanel({
                     <div className="px-5 py-4 space-y-1.5 border-b border-slate-100">
                         <div className="flex justify-between text-xs text-slate-500">
                             <span>Subtotal</span>
-                            <span className="font-medium">₵{po.subtotal.toFixed(2)}</span>
+                            <span className="font-medium">{fmtGHS(po.subtotal)}</span>
                         </div>
                         {po.shipping_cost > 0 && (
                             <div className="flex justify-between text-xs text-slate-500">
                                 <span>Shipping</span>
-                                <span className="font-medium">₵{po.shipping_cost.toFixed(2)}</span>
+                                <span className="font-medium">{fmtGHS(po.shipping_cost)}</span>
                             </div>
                         )}
                         <div className="flex justify-between text-sm font-bold text-ink border-t border-slate-100 pt-2">
                             <span>Total</span>
-                            <span>₵{po.total_amount.toFixed(2)}</span>
+                            <span>{fmtGHS(po.total_amount)}</span>
                         </div>
                     </div>
 

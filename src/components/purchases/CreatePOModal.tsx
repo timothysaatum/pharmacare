@@ -4,22 +4,21 @@
  * Modal for creating a new purchase order.
  *
  * - Supplier dropdown with inline "Add supplier" escape hatch
- * - Dynamic line-item table (add / remove rows, drug search)
+ * - Dynamic line-item table with drug name search combobox
  * - Shipping cost field
  * - Expected delivery date
  * - Inline field-level validation before submit
  * - Server errors rendered below the form
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
     X, Plus, Trash2, Package, AlertCircle, ChevronDown, UserPlus,
+    Search, Loader2,
 } from "lucide-react";
-import type { Supplier, SupplierCreate, PurchaseOrderCreate, PurchaseOrderItemCreate } from "@/types";
+import type { Drug, Supplier, SupplierCreate, PurchaseOrderCreate, PurchaseOrderItemCreate } from "@/types";
+import { drugApi } from "@/api/drugs";
 import { CreateSupplierModal } from "./CreateSupplierModal";
-
-// We reuse the drug search hook that the POS panel uses
-// import { useDrugSearch } from "@/hooks/useDrugSearch";
 
 interface Props {
     branchId: string;
@@ -30,18 +29,17 @@ interface Props {
     onClose: () => void;
     submitting: boolean;
     submitError: string | null;
-    /** Called when user creates a new supplier from within this modal */
     onCreateSupplier: (data: SupplierCreate) => Promise<Supplier | null>;
-    /** Called after a supplier is successfully created — lets parent append it to its list */
     onSupplierCreated: (supplier: Supplier) => void;
     createSupplierSubmitting: boolean;
     createSupplierError: string | null;
 }
 
 interface LineItem {
-    _key: string;         // local-only stable key
+    _key: string;
     drug_id: string;
-    drug_name: string;    // display only
+    drug_name: string;
+    drug_sku: string | null;
     quantity_ordered: number;
     unit_cost: number;
 }
@@ -54,6 +52,139 @@ const labelCls = "block text-xs font-semibold text-ink-muted uppercase tracking-
 
 let _keyCounter = 0;
 const newKey = () => `item-${++_keyCounter}`;
+
+// ─── Drug Search Combobox ────────────────────────────────────────────────────
+// Self-contained per-row combobox: type to search, click to select.
+// Once a drug is selected it shows a pill with a clear button.
+
+interface DrugComboboxProps {
+    value: string;       // drug_id
+    label: string;       // drug_name for display
+    onSelect: (drug: Drug) => void;
+    onClear: () => void;
+    hasError?: boolean;
+}
+
+function DrugCombobox({ value, label, onSelect, onClear, hasError }: DrugComboboxProps) {
+    const [query, setQuery] = useState("");
+    const [results, setResults] = useState<Drug[]>([]);
+    const [searching, setSearching] = useState(false);
+    const [open, setOpen] = useState(false);
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const wrapperRef = useRef<HTMLDivElement>(null);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+                setOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+    }, []);
+
+    const search = (q: string) => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        if (q.trim().length < 2) {
+            setResults([]);
+            setOpen(false);
+            return;
+        }
+        debounceRef.current = setTimeout(async () => {
+            setSearching(true);
+            try {
+                const res = await drugApi.list({ search: q, page_size: 20, is_active: true });
+                setResults(res.items ?? []);
+                setOpen(true);
+            } catch {
+                setResults([]);
+            } finally {
+                setSearching(false);
+            }
+        }, 300);
+    };
+
+    const handleSelect = (drug: Drug) => {
+        onSelect(drug);
+        setQuery("");
+        setResults([]);
+        setOpen(false);
+    };
+
+    // ── Selected state: show pill ──────────────────────────────
+    if (value) {
+        return (
+            <div className={`flex items-center gap-2 h-9 px-2.5 rounded-lg border ${hasError ? "border-red-300 bg-red-50/30" : "border-brand-200 bg-brand-50"} text-sm w-full`}>
+                <Package className="w-3.5 h-3.5 text-brand-500 flex-shrink-0" />
+                <span className="flex-1 truncate text-brand-800 font-medium text-xs">{label}</span>
+                <button
+                    type="button"
+                    onClick={onClear}
+                    className="p-0.5 rounded text-brand-400 hover:text-brand-700 hover:bg-brand-100 transition-colors flex-shrink-0"
+                    title="Remove drug"
+                >
+                    <X className="w-3 h-3" />
+                </button>
+            </div>
+        );
+    }
+
+    // ── Search state: show input + dropdown ───────────────────
+    return (
+        <div ref={wrapperRef} className="relative w-full">
+            <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                <input
+                    value={query}
+                    onChange={(e) => { setQuery(e.target.value); search(e.target.value); }}
+                    onFocus={() => { if (results.length > 0) setOpen(true); }}
+                    placeholder="Search drug name…"
+                    className={`h-9 w-full pl-8 pr-8 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-colors ${hasError ? "border-red-300 bg-red-50/30" : "border-slate-200"}`}
+                />
+                {searching && (
+                    <Loader2 className="absolute right-2.5 top-2.5 w-3.5 h-3.5 text-slate-400 animate-spin" />
+                )}
+            </div>
+
+            {/* Dropdown */}
+            {open && results.length > 0 && (
+                <div className="absolute z-[70] top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                    {results.map((drug) => (
+                        <button
+                            key={drug.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()} // prevent blur before click
+                            onClick={() => handleSelect(drug)}
+                            className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors"
+                        >
+                            <Package className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                            <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-ink truncate">{drug.name}</p>
+                                <p className="text-[10px] text-slate-400 truncate">
+                                    {[drug.generic_name, drug.sku, drug.strength]
+                                        .filter(Boolean)
+                                        .join(" · ")}
+                                </p>
+                            </div>
+                            <span className="text-xs font-semibold text-slate-500 flex-shrink-0 mt-0.5">
+                                ₵{drug.unit_price.toFixed(2)}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {open && query.length >= 2 && results.length === 0 && !searching && (
+                <div className="absolute z-[70] top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2.5">
+                    <p className="text-xs text-slate-400">No drugs found for "{query}"</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Main Modal ──────────────────────────────────────────────────────────────
 
 export function CreatePOModal({
     branchId,
@@ -74,11 +205,10 @@ export function CreatePOModal({
     const [shippingCost, setShippingCost] = useState<number>(0);
     const [notes, setNotes] = useState("");
     const [items, setItems] = useState<LineItem[]>([
-        { _key: newKey(), drug_id: "", drug_name: "", quantity_ordered: 1, unit_cost: 0 },
+        { _key: newKey(), drug_id: "", drug_name: "", drug_sku: null, quantity_ordered: 1, unit_cost: 0 },
     ]);
     const [errors, setErrors] = useState<Record<string, string>>({});
 
-    // ── Supplier creation sub-modal ───────────────────────────
     const [showCreateSupplier, setShowCreateSupplier] = useState(false);
 
     // ── Line item helpers ─────────────────────────────────────
@@ -86,7 +216,7 @@ export function CreatePOModal({
     const addRow = () =>
         setItems((prev) => [
             ...prev,
-            { _key: newKey(), drug_id: "", drug_name: "", quantity_ordered: 1, unit_cost: 0 },
+            { _key: newKey(), drug_id: "", drug_name: "", drug_sku: null, quantity_ordered: 1, unit_cost: 0 },
         ]);
 
     const removeRow = (key: string) =>
@@ -96,6 +226,20 @@ export function CreatePOModal({
         setItems((prev) =>
             prev.map((r) => (r._key === key ? { ...r, ...patch } : r)),
         );
+
+    const selectDrug = (key: string, drug: Drug) => {
+        updateRow(key, {
+            drug_id: drug.id,
+            drug_name: drug.name,
+            drug_sku: drug.sku,
+            // Pre-fill unit_cost with the drug's cost_price if available, else unit_price
+            unit_cost: drug.cost_price ?? drug.unit_price,
+        });
+    };
+
+    const clearDrug = (key: string) => {
+        updateRow(key, { drug_id: "", drug_name: "", drug_sku: null, unit_cost: 0 });
+    };
 
     // ── Validation ────────────────────────────────────────────
 
@@ -110,7 +254,6 @@ export function CreatePOModal({
         if (items.some((i) => i.unit_cost <= 0))
             errs.items = "Unit cost must be greater than 0";
 
-        // Duplicate drugs
         const drugIds = items.map((i) => i.drug_id).filter(Boolean);
         if (new Set(drugIds).size !== drugIds.length)
             errs.items = "Duplicate drugs detected — each drug can only appear once";
@@ -144,10 +287,7 @@ export function CreatePOModal({
     }, [supplierId, items, shippingCost, expectedDate, notes, branchId, onSubmit, onClose]);
 
     // ── Totals ────────────────────────────────────────────────
-    const subtotal = items.reduce(
-        (s, i) => s + i.quantity_ordered * i.unit_cost,
-        0,
-    );
+    const subtotal = items.reduce((s, i) => s + i.quantity_ordered * i.unit_cost, 0);
     const total = subtotal + shippingCost;
 
     return (
@@ -187,7 +327,6 @@ export function CreatePOModal({
                                     <label className={labelCls} style={{ marginBottom: 0 }}>
                                         Supplier *
                                     </label>
-                                    {/* ── Inline "Add supplier" link ── */}
                                     <button
                                         type="button"
                                         onClick={() => setShowCreateSupplier(true)}
@@ -213,7 +352,6 @@ export function CreatePOModal({
                                 {errors.supplier && (
                                     <p className="text-xs text-red-500 mt-1">{errors.supplier}</p>
                                 )}
-                                {/* Empty state hint */}
                                 {suppliersError ? (
                                     <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
                                         <AlertCircle className="w-3 h-3" />
@@ -263,10 +401,10 @@ export function CreatePOModal({
                                 </p>
                             )}
 
-                            <div className="rounded-xl border border-slate-200 overflow-hidden">
+                            <div className="rounded-xl border border-slate-200 overflow-visible">
                                 {/* Table header */}
-                                <div className="grid grid-cols-[1fr_100px_120px_36px] gap-2 px-3 py-2 bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                                    <span>Drug / SKU</span>
+                                <div className="grid grid-cols-[1fr_100px_120px_36px] gap-2 px-3 py-2 bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-widest rounded-t-xl">
+                                    <span>Drug</span>
                                     <span>Qty</span>
                                     <span>Unit Cost (₵)</span>
                                     <span />
@@ -279,14 +417,15 @@ export function CreatePOModal({
                                             key={row._key}
                                             className="grid grid-cols-[1fr_100px_120px_36px] gap-2 px-3 py-2 items-center"
                                         >
-                                            {/* Drug ID input — in a real app this would be a
-                                                drug-search combobox reusing DrugSearchPanel logic */}
-                                            <input
+                                            {/* Drug search combobox */}
+                                            <DrugCombobox
                                                 value={row.drug_id}
-                                                onChange={(e) => updateRow(row._key, { drug_id: e.target.value })}
-                                                placeholder="Drug ID or SKU"
-                                                className="h-9 px-2.5 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 w-full"
+                                                label={row.drug_name}
+                                                onSelect={(drug) => selectDrug(row._key, drug)}
+                                                onClear={() => clearDrug(row._key)}
+                                                hasError={!!errors.items && !row.drug_id}
                                             />
+
                                             <input
                                                 type="number"
                                                 min={1}
@@ -405,13 +544,12 @@ export function CreatePOModal({
                 </div>
             </div>
 
-            {/* ── Create Supplier sub-modal (z-[60], renders above this modal) ── */}
+            {/* Create Supplier sub-modal */}
             {showCreateSupplier && (
                 <CreateSupplierModal
                     onSubmit={onCreateSupplier}
                     onCreated={(newSupplier) => {
                         onSupplierCreated(newSupplier);
-                        // Auto-select the just-created supplier
                         setSupplierId(newSupplier.id);
                         setShowCreateSupplier(false);
                     }}

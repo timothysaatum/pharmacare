@@ -264,7 +264,7 @@ export default function PurchasesPage() {
                                             </td>
                                             <td className="px-4 py-3">
                                                 <span className="text-sm font-semibold text-ink">
-                                                    ₵{order.total_amount.toFixed(2)}
+                                                    {fmtGHS(order.total_amount)}
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3">
@@ -381,4 +381,10 @@ function POSupplierCell({
 
 function fmtDate(iso: string): string {
     return new Date(iso).toLocaleDateString("en-GH", { dateStyle: "medium" });
+}
+
+// Python Decimal serialises to a JSON string — always coerce with Number()
+// before calling .toFixed() so the page never crashes on string values.
+function fmtGHS(value: number | string | null | undefined): string {
+    return `₵${Number(value ?? 0).toFixed(2)}`;
 }
