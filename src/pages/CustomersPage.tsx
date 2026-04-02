@@ -132,9 +132,6 @@ export default function CustomersPage() {
         setEditingCustomer(null);
     };
 
-    // Always fetch the full CustomerWithDetails (with purchase stats) when
-    // opening the drawer — the list endpoint returns the base Customer shape
-    // which lacks total_purchases, total_spent, last_purchase_date etc.
     const openDetail = async (c: CustomerWithDetails) => {
         setDetailCustomer(c); // show drawer immediately with list data
         setDetailLoading(true);
@@ -236,7 +233,7 @@ export default function CustomersPage() {
                                     <th className="text-left px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Type</th>
                                     <th className="text-left px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Contact</th>
                                     <th className="text-left px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Loyalty</th>
-                                    <th className="text-right px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Purchases</th>
+
                                     <th className="text-center px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Status</th>
                                     <th className="text-right px-5 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Actions</th>
                                 </tr>
@@ -299,20 +296,7 @@ export default function CustomersPage() {
                                                     </p>
                                                 </div>
                                             </td>
-                                            {/* Purchase stats */}
-                                            <td className="px-4 py-3 text-right">
-                                                {c.total_purchases > 0 ? (
-                                                    <div className="text-xs text-ink-secondary">
-                                                        <p className="flex items-center justify-end gap-1">
-                                                            <ShoppingBag className="w-3 h-3" />
-                                                            {c.total_purchases}
-                                                        </p>
-                                                        <p className="text-ink font-semibold">₵{c.total_spent?.toFixed(2) ?? "0.00"}</p>
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-xs text-ink-muted">No purchases</span>
-                                                )}
-                                            </td>
+
                                             {/* Status */}
                                             <td className="px-4 py-3 text-center">
                                                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.is_active ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-500"}`}>

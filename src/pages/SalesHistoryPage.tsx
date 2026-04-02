@@ -24,7 +24,7 @@ import {
     ChevronLeft, ChevronRight, X, CheckCircle2,
     XCircle, Clock, RotateCcw, CreditCard, Banknote,
     Smartphone, Shield, ShoppingBag, TrendingUp,
-    SlidersHorizontal, Calendar, User, Package,
+    SlidersHorizontal, Calendar, User,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { salesApi } from "@/api/sales";
@@ -228,17 +228,6 @@ function SaleDetailPanel({
         // This never triggers popup blockers and has no race condition.
         const iframe = document.createElement("iframe");
         iframe.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;border:none;visibility:hidden;";
-
-        // ── CRITICAL: onload must be registered BEFORE appending/writing,
-        // otherwise the load event fires before the handler is attached
-        // and the callback never executes.
-        iframe.onload = () => {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-            // Remove iframe after a short delay so the print dialog can open
-            setTimeout(() => document.body.removeChild(iframe), 1000);
-        };
-
         document.body.appendChild(iframe);
 
         const iframeDoc = iframe.contentDocument ?? iframe.contentWindow?.document;
@@ -247,6 +236,14 @@ function SaleDetailPanel({
         iframeDoc.open();
         iframeDoc.write(html);
         iframeDoc.close();
+
+        // Wait for iframe content to fully render before printing
+        iframe.onload = () => {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+            // Remove iframe after a short delay so the print dialog can open
+            setTimeout(() => document.body.removeChild(iframe), 1000);
+        };
     };
 
     return (
@@ -255,7 +252,7 @@ function SaleDetailPanel({
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
                 <div>
                     <p className="text-xs font-bold text-ink-muted uppercase tracking-widest mb-0.5">Sale Detail</p>
-                    {sale && (
+                     {sale && (
                         <p className="text-sm font-bold text-ink font-mono">{sale.sale_number}</p>
                     )}
                 </div>
@@ -453,7 +450,6 @@ function SaleDetailPanel({
 
                 {/* Receipt view */}
                 {sale && view === "receipt" && receipt && (
-                    // ── FIX: ref attached here so handlePrint can grab only this content ──
                     <div ref={receiptRef} className="p-5 font-mono text-xs space-y-4">
                         {/* Receipt header */}
                         <div className="text-center space-y-1 border-b border-dashed border-slate-300 pb-4">
@@ -778,7 +774,7 @@ export default function SalesHistoryPage() {
                             <table className="w-full">
                                 <thead className="sticky top-0 bg-white border-b border-slate-100 z-10">
                                     <tr>
-                                        {["Sale #", "Date", "Customer", "Items", "Payment", "Total", "Status"].map((h) => (
+                                        {["Sale #", "Date", "Customer", "Payment", "Total", "Status"].map((h) => (
                                             <th
                                                 key={h}
                                                 className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase tracking-widest"
@@ -811,12 +807,7 @@ export default function SalesHistoryPage() {
                                                     </span>
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3">
-                                                <div className="flex items-center gap-1 text-sm text-slate-500">
-                                                    <Package className="w-3.5 h-3.5 text-slate-300" />
-                                                    {(sale as Sale & { items?: unknown[] }).items?.length ?? "—"}
-                                                </div>
-                                            </td>
+
                                             <td className="px-4 py-3">
                                                 <PaymentBadge method={sale.payment_method} />
                                             </td>

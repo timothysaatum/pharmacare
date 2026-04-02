@@ -78,13 +78,16 @@ export function usePurchaseOrders(options: UsePurchaseOrdersOptions = {}) {
             if (statusFilter) params.status = statusFilter as PurchaseOrderStatus;
             if (supplierFilter) params.supplier_id = supplierFilter;
 
-            const data = await purchaseOrdersApi.list(params);
+            const data = await purchaseOrdersApi.list(params, controller.signal);
             setOrders(data.items);
             setTotal(data.total);
             setTotalPages(data.total_pages);
             setPage(targetPage);
         } catch (err: unknown) {
-            if ((err as { name?: string }).name !== "AbortError") {
+            // Axios names its cancellation error "CanceledError"; native fetch uses "AbortError".
+            // Either way it is an intentional abort — never surface it as a user-visible error.
+            const name = (err as { name?: string }).name;
+            if (name !== "AbortError" && name !== "CanceledError") {
                 setListError(parseApiError(err));
             }
         } finally {

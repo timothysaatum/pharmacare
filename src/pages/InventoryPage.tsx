@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
 import {
     Search, Package, AlertTriangle, Clock, RefreshCw,
-    ChevronLeft, ChevronRight, X, TrendingDown, Plus,
+    ChevronLeft, ChevronRight, X, TrendingDown, Plus, BarChart3,
 } from "lucide-react";
 import { inventoryApi } from "@/api/inventory";
 import { drugApi } from "@/api/drugs";
@@ -11,9 +11,16 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { AddBatchForm } from "@/components/inventory/AddBatchForm";
 import { parseApiError } from "@/api/client";
 import { appEvents, useAppEvent } from "@/lib/events";
-import type { BranchInventoryWithDetails, LowStockItem, ExpiringBatchItem, Drug, DrugBatch } from "@/types";
+import type {
+    BranchInventoryWithDetails,
+    LowStockItem,
+    ExpiringBatchItem,
+    InventoryValuationResponse,
+    Drug,
+    DrugBatch,
+} from "@/types";
 
-type ActiveView = "stock" | "low_stock" | "expiring";
+type ActiveView = "stock" | "low_stock" | "expiring" | "valuation";
 
 export default function InventoryPage() {
     const { activeBranchId } = useAuthStore();
@@ -37,20 +44,33 @@ export default function InventoryPage() {
     const [expiringItems, setExpiringItems] = useState<ExpiringBatchItem[]>([]);
     const [expiringCount, setExpiringCount] = useState(0);
 
+    // ── Valuation view ────────────────────────────────────────
+    const [valuation, setValuation] = useState<InventoryValuationResponse | null>(null);
+    const [valuationLoading, setValuationLoading] = useState(false);
+    const [valuationError, setValuationError] = useState<string | null>(null);
+    // Lazy-load: only fetch when the tab is first opened; stale-invalidate on batch add.
+    const valuationFetchedRef = useRef(false);
+    // Client-side pagination for valuation (the endpoint returns all items at once)
+    const [valuationPage, setValuationPage] = useState(1);
+    const VALUATION_PAGE_SIZE = 25;
+
     // ── Add batch modal ───────────────────────────────────────
     const [addBatchDrug, setAddBatchDrug] = useState<Drug | null>(null);
     const [addBatchError, setAddBatchError] = useState<string | null>(null);
-    const [addBatchLoading, setAddBatchLoading] = useState(false);
+    // FIX: track loading per drug_id so only the clicked row shows a spinner;
+    // every other row's "Add" button stays enabled.
+    const [addBatchLoadingId, setAddBatchLoadingId] = useState<string | null>(null);
 
-    // FIX: drugMap caches reorder_level (and other drug fields) keyed by drug_id
-    // so stockStatusBadge can use the real per-drug threshold instead of a
-    // hardcoded value. Populated lazily from inventory rows.
-    const [drugMap, setDrugMap] = useState<Map<string, Drug>>(new Map());
-
-    // AbortController for inventory fetch
+    // AbortController ref for inventory fetch cancellation on unmount / stale
     const abortRef = useRef<AbortController | null>(null);
 
     // ── Fetch inventory ───────────────────────────────────────
+    // FIX: drugMap completely removed.
+    // drug_reorder_level is now joined by the backend in BranchInventoryWithDetails,
+    // eliminating the N+1 drugApi.getById() calls that triggered on every page
+    // change.  Previously those calls were inside a useCallback whose deps did
+    // NOT include drugMap, meaning the stale closure would always see an empty
+    // Map and re-fetch every drug regardless of what was already cached.
     const fetchInventory = useCallback(async () => {
         if (!activeBranchId) return;
 
@@ -77,29 +97,6 @@ export default function InventoryPage() {
                 setInventory(result.items);
                 setTotalPages(result.total_pages);
                 setTotal(result.total);
-
-                // FIX: fetch drug details for every unique drug_id in the result
-                // so we have reorder_level available for stockStatusBadge.
-                // We only fetch drugs we don't already have in the map.
-                const unknownIds = [
-                    ...new Set(result.items.map((i) => i.drug_id)),
-                ].filter((id) => !drugMap.has(id));
-
-                if (unknownIds.length > 0) {
-                    Promise.allSettled(
-                        unknownIds.map((id) => drugApi.getById(id))
-                    ).then((results) => {
-                        setDrugMap((prev) => {
-                            const next = new Map(prev);
-                            results.forEach((r, idx) => {
-                                if (r.status === "fulfilled") {
-                                    next.set(unknownIds[idx], r.value);
-                                }
-                            });
-                            return next;
-                        });
-                    });
-                }
             }
         } catch (err: unknown) {
             if (err instanceof Error && err.name === "AbortError") return;
@@ -116,7 +113,7 @@ export default function InventoryPage() {
             setLowStockItems(result.items);
             setLowStockCounts({ out: result.out_of_stock_count, low: result.low_stock_count });
         } catch {
-            // Report failures are non-critical — don't block the main view
+            // Non-critical — don't block the main view
         }
     }, [activeBranchId]);
 
@@ -131,6 +128,22 @@ export default function InventoryPage() {
         }
     }, [activeBranchId]);
 
+    const fetchValuation = useCallback(async () => {
+        if (!activeBranchId) return;
+        setValuationLoading(true);
+        setValuationError(null);
+        try {
+            const result = await inventoryApi.getValuation(activeBranchId);
+            setValuation(result);
+            valuationFetchedRef.current = true;
+            setValuationPage(1); // reset to first page on fresh fetch
+        } catch (err) {
+            setValuationError(parseApiError(err));
+        } finally {
+            setValuationLoading(false);
+        }
+    }, [activeBranchId]);
+
     useEffect(() => {
         fetchInventory();
         return () => abortRef.current?.abort();
@@ -141,11 +154,21 @@ export default function InventoryPage() {
         fetchExpiring();
     }, [fetchLowStock, fetchExpiring]);
 
-    // Auto-refresh when stock changes from any page (DrugListPage batch add, POS sale, etc.)
+    // Lazy-load valuation only on first tab open; re-fetch when explicitly refreshed
+    useEffect(() => {
+        if (activeView === "valuation" && !valuationFetchedRef.current) {
+            fetchValuation();
+        }
+    }, [activeView, fetchValuation]);
+
+    // FIX: fetchExpiring now subscribed to inventory:changed so batches with
+    // near-expiry dates appear in the "Expiring Soon" tab immediately after
+    // stock is added — no manual refresh needed.
     useAppEvent("inventory:changed", fetchInventory);
     useAppEvent("inventory:changed", fetchLowStock);
+    useAppEvent("inventory:changed", fetchExpiring);
 
-    // Reset page when search/filter changes
+    // Reset to page 1 when search or filter changes
     const prevFilters = useRef({ debouncedSearch, lowStockOnly });
     useEffect(() => {
         const prev = prevFilters.current;
@@ -156,34 +179,33 @@ export default function InventoryPage() {
     }, [debouncedSearch, lowStockOnly]);
 
     // ── Add stock for an inventory row ────────────────────────
-    // Previously had a silent `.catch(()=>{})` — now surfaces errors properly
     const handleAddStockForItem = async (item: BranchInventoryWithDetails) => {
         setAddBatchError(null);
-        setAddBatchLoading(true);
+        setAddBatchLoadingId(item.drug_id);
         try {
             const drug = await drugApi.getById(item.drug_id);
             setAddBatchDrug(drug);
         } catch (err) {
             setAddBatchError(`Could not load drug details: ${parseApiError(err)}`);
         } finally {
-            setAddBatchLoading(false);
+            setAddBatchLoadingId(null);
         }
     };
 
     const handleBatchAdded = (_batch: DrugBatch) => {
         setAddBatchDrug(null);
-        appEvents.emit("inventory:changed"); // refreshes this page + DrugListPage low stock
+        // Stale-invalidate valuation so the next tab open re-fetches fresh data
+        valuationFetchedRef.current = false;
+        appEvents.emit("inventory:changed");
     };
 
-    // FIX: accepts reorder_level so the badge reflects the drug's actual
-    // threshold rather than a hardcoded value of 10. Also uses the server's
-    // computed available_quantity when present, falling back to the local
-    // calculation so both online and offline cases are correct.
-    const stockStatusBadge = (item: BranchInventoryWithDetails, reorderLevel: number) => {
+    // FIX: now uses item.drug_reorder_level (joined from the backend) instead
+    // of a drugMap lookup that fell back to a hardcoded 10.
+    const stockStatusBadge = (item: BranchInventoryWithDetails) => {
         const avail = item.available_quantity ?? (item.quantity - item.reserved_quantity);
         if (avail === 0)
             return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-600">Out of stock</span>;
-        if (avail <= reorderLevel)
+        if (avail <= item.drug_reorder_level)
             return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">Low</span>;
         return <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-600">In stock</span>;
     };
@@ -192,6 +214,7 @@ export default function InventoryPage() {
         { id: "stock", label: "All Stock", icon: Package },
         { id: "low_stock", label: "Low Stock", icon: TrendingDown, badge: lowStockCounts.out + lowStockCounts.low },
         { id: "expiring", label: "Expiring Soon", icon: Clock, badge: expiringCount },
+        { id: "valuation", label: "Valuation", icon: BarChart3 },
     ];
 
     return (
@@ -204,9 +227,15 @@ export default function InventoryPage() {
                         <p className="text-sm text-ink-muted mt-0.5">Stock levels and batch tracking for this branch</p>
                     </div>
                     <button
-                        onClick={() => { fetchInventory(); fetchLowStock(); fetchExpiring(); }}
-                        className="w-9 h-9 rounded-lg flex items-center justify-center text-ink-muted hover:text-ink hover:bg-slate-100 transition-colors">
-                        <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+                        onClick={() => {
+                            fetchInventory();
+                            fetchLowStock();
+                            fetchExpiring();
+                            if (activeView === "valuation") fetchValuation();
+                        }}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-ink-muted hover:text-ink hover:bg-slate-100 transition-colors"
+                        title="Refresh">
+                        <RefreshCw className={`w-4 h-4 ${isLoading || valuationLoading ? "animate-spin" : ""}`} />
                     </button>
                 </div>
 
@@ -241,13 +270,13 @@ export default function InventoryPage() {
                         const active = activeView === v.id;
                         return (
                             <button key={v.id} onClick={() => setActiveView(v.id)}
-                                className={`flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all -mb-px ${active ? "border-brand-600 text-brand-600" : "border-transparent text-ink-muted hover:text-ink"
-                                    }`}>
+                                className={`flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all -mb-px ${active ? "border-brand-600 text-brand-600" : "border-transparent text-ink-muted hover:text-ink"}`}>
                                 <Icon className="w-4 h-4" />
                                 {v.label}
                                 {v.badge && v.badge > 0 ? (
-                                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${active ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-ink-muted"
-                                        }`}>{v.badge}</span>
+                                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${active ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-ink-muted"}`}>
+                                        {v.badge}
+                                    </span>
                                 ) : null}
                             </button>
                         );
@@ -277,7 +306,6 @@ export default function InventoryPage() {
                         </label>
                     </div>
 
-                    {/* Add batch error (from loading drug details) */}
                     {addBatchError && (
                         <div className="mx-6 mt-3 rounded-xl bg-red-50 border border-red-100 p-3 flex gap-2 items-center">
                             <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
@@ -324,12 +352,9 @@ export default function InventoryPage() {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 bg-white">
                                     {inventory.map((item) => {
-                                        const drug = drugMap.get(item.drug_id);
-                                        const reorderLevel = drug?.reorder_level ?? 10;
-                                        // FIX: prefer server-computed available_quantity,
-                                        // fall back to local calc for offline correctness
                                         const available = item.available_quantity ?? (item.quantity - item.reserved_quantity);
-                                        const value = available * item.drug_unit_price;
+                                        const value = available * Number(item.drug_unit_price);
+                                        const isThisRowLoading = addBatchLoadingId === item.drug_id;
                                         return (
                                             <tr key={item.id} className="hover:bg-slate-50/70 transition-colors group">
                                                 <td className="px-6 py-3">
@@ -341,23 +366,27 @@ export default function InventoryPage() {
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
-                                                    <span className={`font-bold ${available === 0 ? "text-red-600" : available <= reorderLevel ? "text-amber-600" : "text-ink"}`}>
+                                                    <span className={`font-bold ${available === 0 ? "text-red-600" : available <= item.drug_reorder_level ? "text-amber-600" : "text-ink"}`}>
                                                         {available.toLocaleString()}
                                                     </span>
                                                 </td>
                                                 <td className="px-4 py-3 text-center text-ink-secondary">{item.reserved_quantity}</td>
                                                 <td className="px-4 py-3 text-center text-ink-secondary">{item.quantity.toLocaleString()}</td>
                                                 <td className="px-4 py-3 text-ink-muted text-xs">{item.location ?? "—"}</td>
-                                                <td className="px-4 py-3 text-center">{stockStatusBadge(item, reorderLevel)}</td>
+                                                <td className="px-4 py-3 text-center">{stockStatusBadge(item)}</td>
                                                 <td className="px-6 py-3 text-right">
                                                     <span className="font-medium text-ink">₵{value.toFixed(2)}</span>
                                                 </td>
                                                 <td className="px-6 py-3">
+                                                    {/* FIX: only this row's button is disabled while its drug details load */}
                                                     <button
                                                         onClick={() => handleAddStockForItem(item)}
-                                                        disabled={addBatchLoading}
+                                                        disabled={isThisRowLoading}
                                                         className="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 rounded-lg transition-all disabled:opacity-40">
-                                                        {addBatchLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                                                        {isThisRowLoading
+                                                            ? <RefreshCw className="w-3 h-3 animate-spin" />
+                                                            : <Plus className="w-3 h-3" />
+                                                        }
                                                         Add
                                                     </button>
                                                 </td>
@@ -421,8 +450,7 @@ export default function InventoryPage() {
                                         <td className="px-4 py-3 text-center text-ink-secondary">{item.reorder_level}</td>
                                         <td className="px-4 py-3 text-center text-ink-secondary">{item.recommended_order_quantity}</td>
                                         <td className="px-4 py-3 text-center">
-                                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${item.status === "out_of_stock" ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"
-                                                }`}>
+                                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${item.status === "out_of_stock" ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-600"}`}>
                                                 {item.status === "out_of_stock" ? "Out of stock" : "Low stock"}
                                             </span>
                                         </td>
@@ -469,25 +497,131 @@ export default function InventoryPage() {
                                             })}
                                         </td>
                                         <td className="px-4 py-3 text-center">
-                                            {/* FIX: color order was semantically backwards.
-                                                ≤30 days = critical (red), ≤60 = warning (amber),
-                                                >60 = approaching but manageable (green). */}
                                             <span className={`font-bold text-sm ${item.days_until_expiry <= 30 ? "text-red-600"
-                                                    : item.days_until_expiry <= 60 ? "text-amber-600"
-                                                        : "text-green-600"
+                                                : item.days_until_expiry <= 60 ? "text-amber-600"
+                                                    : "text-green-600"
                                                 }`}>
                                                 {item.days_until_expiry}d
                                             </span>
                                         </td>
                                         <td className="px-6 py-3 text-right font-medium text-ink">
-                                            {/* selling_value is number in index.ts */}
-                                            ₵{item.selling_value.toFixed(2)}
+                                            ₵{Number(item.selling_value ?? item.cost_value ?? 0).toFixed(2)}
                                         </td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     )}
+                </div>
+            )}
+
+            {/* ── VALUATION ── */}
+            {activeView === "valuation" && (
+                <div className="flex-1 overflow-auto">
+                    {valuationLoading ? (
+                        <div className="flex items-center justify-center h-64">
+                            <RefreshCw className="w-6 h-6 text-brand-500 animate-spin" />
+                        </div>
+                    ) : valuationError ? (
+                        <div className="mx-6 mt-4 rounded-xl bg-red-50 border border-red-100 p-4 flex gap-2 items-start">
+                            <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                            <div>
+                                <p className="text-sm font-medium text-red-700">Could not load valuation report</p>
+                                <p className="text-xs text-red-600 mt-0.5">{valuationError}</p>
+                            </div>
+                            <button onClick={fetchValuation}
+                                className="ml-auto text-xs font-medium text-red-600 hover:text-red-700 underline underline-offset-2">
+                                Retry
+                            </button>
+                        </div>
+                    ) : valuation ? (() => {
+                        const valTotalPages = Math.max(1, Math.ceil(valuation.items.length / VALUATION_PAGE_SIZE));
+                        const valOffset = (valuationPage - 1) * VALUATION_PAGE_SIZE;
+                        const valPageItems = valuation.items.slice(valOffset, valOffset + VALUATION_PAGE_SIZE);
+                        return (
+                            <>
+                                {/* Summary cards */}
+                                <div className="px-6 pt-5 pb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                    {[
+                                        { label: "Total Cost Value", value: valuation.total_cost_value, color: "text-ink" },
+                                        { label: "Total Selling Value", value: valuation.total_selling_value, color: "text-brand-600" },
+                                        { label: "Potential Profit", value: valuation.total_potential_profit, color: "text-emerald-600" },
+                                    ].map(({ label, value, color }) => (
+                                        <div key={label} className="rounded-xl bg-white border border-slate-100 p-4">
+                                            <p className="text-xs font-medium text-ink-muted uppercase tracking-wide">{label}</p>
+                                            <p className={`text-xl font-bold mt-1 ${color}`}>
+                                                ₵{Number(value).toLocaleString("en-GH", { minimumFractionDigits: 2 })}
+                                            </p>
+                                        </div>
+                                    ))}
+                                    <div className="rounded-xl bg-white border border-slate-100 p-4">
+                                        <p className="text-xs font-medium text-ink-muted uppercase tracking-wide">Profit Margin</p>
+                                        <p className="text-xl font-bold text-ink mt-1">
+                                            {Number(valuation.profit_margin_percentage).toFixed(1)}%
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10">
+                                        <tr>
+                                            <th className="text-left px-6 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Drug</th>
+                                            <th className="text-center px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Qty</th>
+                                            <th className="text-right px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Cost / Unit</th>
+                                            <th className="text-right px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Sell / Unit</th>
+                                            <th className="text-right px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Total Cost</th>
+                                            <th className="text-right px-4 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Total Sell</th>
+                                            <th className="text-right px-6 py-3 text-xs font-semibold text-ink-muted uppercase tracking-wide">Profit</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 bg-white">
+                                        {valPageItems.map((item) => (
+                                            <tr key={item.drug_id} className="hover:bg-slate-50/70 transition-colors">
+                                                <td className="px-6 py-3">
+                                                    <div className="font-medium text-ink">{item.drug_name}</div>
+                                                    {item.sku && <div className="text-xs font-mono text-ink-muted mt-0.5">{item.sku}</div>}
+                                                </td>
+                                                <td className="px-4 py-3 text-center text-ink-secondary">{item.quantity.toLocaleString()}</td>
+                                                <td className="px-4 py-3 text-right text-ink-secondary">₵{Number(item.cost_price).toFixed(2)}</td>
+                                                <td className="px-4 py-3 text-right text-ink-secondary">₵{Number(item.selling_price).toFixed(2)}</td>
+                                                <td className="px-4 py-3 text-right text-ink">₵{Number(item.total_cost_value).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-4 py-3 text-right font-medium text-brand-600">₵{Number(item.total_selling_value).toLocaleString("en-GH", { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-6 py-3 text-right">
+                                                    <span className={`font-semibold ${Number(item.potential_profit) >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                                        ₵{Number(item.potential_profit).toLocaleString("en-GH", { minimumFractionDigits: 2 })}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+
+                                <div className="px-6 py-3 border-t border-slate-200 bg-white flex items-center justify-between">
+                                    <p className="text-xs text-ink-muted">
+                                        {valuation.total_items} drugs · {valuation.total_quantity.toLocaleString()} total units ·
+                                        as of {new Date(valuation.valuation_date).toLocaleString("en-GH")}
+                                        {valTotalPages > 1 && ` · page ${valuationPage} of ${valTotalPages}`}
+                                    </p>
+                                    {valTotalPages > 1 && (
+                                        <div className="flex gap-1">
+                                            <button
+                                                onClick={() => setValuationPage((p) => Math.max(1, p - 1))}
+                                                disabled={valuationPage === 1}
+                                                className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-ink-muted disabled:opacity-40">
+                                                <ChevronLeft className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={() => setValuationPage((p) => Math.min(valTotalPages, p + 1))}
+                                                disabled={valuationPage === valTotalPages}
+                                                className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 text-ink-muted disabled:opacity-40">
+                                                <ChevronRight className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        );
+                    })() : null}
                 </div>
             )}
 

@@ -1,5 +1,4 @@
 /**
- * api/inventory.ts
  * ================
  * HTTP wrappers for the inventory endpoints.
  * All URLs are verified against the FastAPI router in inventory_routes.py.
@@ -12,59 +11,18 @@ import type {
     DrugBatch,
     DrugBatchCreate,
     InventoryValuationResponse,
-    LowStockItem,
-    ExpiringBatchItem,
     PaginatedResponse,
     StockAdjustmentCreate,
     StockAdjustmentResponse,
+    // These four types were previously declared locally; they now live in
+    // @/types so any module can import them without depending on the API layer.
+    LowStockReport,
+    ExpiringBatchReport,
+    StockTransferCreate,
+    StockTransferResponse,
 } from "@/types";
 
 const BASE = "/inventory";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Report response shapes (router-confirmed field lists)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface LowStockReport {
-    organization_id: string;
-    branch_id: string | null;
-    report_date: string;
-    items: LowStockItem[];
-    total_items: number;
-    out_of_stock_count: number;
-    low_stock_count: number;
-}
-
-export interface ExpiringBatchReport {
-    organization_id: string;
-    branch_id: string | null;
-    report_date: string;
-    days_threshold: number;
-    items: ExpiringBatchItem[];
-    total_items: number;
-    total_quantity: number;
-    total_cost_value: number;
-    total_selling_value: number;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Transfer types
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface StockTransferCreate {
-    from_branch_id: string;
-    to_branch_id: string;
-    drug_id: string;
-    quantity: number;
-    reason: string;
-}
-
-export interface StockTransferResponse {
-    source_adjustment: StockAdjustmentResponse;
-    destination_adjustment: StockAdjustmentResponse;
-    success: boolean;
-    message: string;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API

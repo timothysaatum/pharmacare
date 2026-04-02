@@ -81,8 +81,8 @@ export const purchaseOrdersApi = {
         get<PurchaseOrderWithDetails>(`/purchase-orders/${id}`),
 
     /** Paginated list (lightweight — no item detail) */
-    list: (params: ListPurchaseOrdersParams = {}): Promise<PaginatedResponse<PurchaseOrder>> =>
-        get<PaginatedResponse<PurchaseOrder>>("/purchase-orders/", { params: params as Record<string, unknown> }),
+    list: (params: ListPurchaseOrdersParams = {}, signal?: AbortSignal): Promise<PaginatedResponse<PurchaseOrder>> =>
+        get<PaginatedResponse<PurchaseOrder>>("/purchase-orders/", { params: params as Record<string, unknown>, signal }),
 
     // ── Workflow transitions ──────────────────────────────────────────────────
 
@@ -124,10 +124,15 @@ export const purchaseOrdersApi = {
         itemId: string,
         quantity_ordered: number,
         unit_cost: number,
-    ): Promise<PurchaseOrderWithDetails> =>
-        patch<PurchaseOrderWithDetails>(
-            `/purchase-orders/${poId}/items/${itemId}?quantity_ordered=${quantity_ordered}&unit_cost=${unit_cost}`,
-        ),
+    ): Promise<PurchaseOrderWithDetails> => {
+        const qs = new URLSearchParams({
+            quantity_ordered: String(quantity_ordered),
+            unit_cost: String(unit_cost),
+        }).toString();
+        return patch<PurchaseOrderWithDetails>(
+            `/purchase-orders/${poId}/items/${itemId}?${qs}`,
+        );
+    },
 
     /** All items with drug details */
     listItems: (id: string): Promise<PurchaseOrderItemWithDetails[]> =>

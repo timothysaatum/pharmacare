@@ -75,6 +75,43 @@ export default function PurchasesPage() {
         [po],
     );
 
+    // ── Workflow actions — refresh detail panel on success ────
+    const handleSubmit = useCallback(
+        async (id: string) => {
+            const result = await po.submitOrder(id);
+            if (result) detail.refresh();
+            return result;
+        },
+        [po, detail],
+    );
+
+    const handleApprove = useCallback(
+        async (id: string) => {
+            const result = await po.approveOrder(id);
+            if (result) detail.refresh();
+            return result;
+        },
+        [po, detail],
+    );
+
+    const handleReject = useCallback(
+        async (id: string, reason: string) => {
+            const result = await po.rejectOrder(id, { reason });
+            if (result) detail.refresh();
+            return result;
+        },
+        [po, detail],
+    );
+
+    const handleCancel = useCallback(
+        async (id: string, reason: string) => {
+            const result = await po.cancelOrder(id, { reason });
+            if (result) detail.refresh();
+            return result;
+        },
+        [po, detail],
+    );
+
     // ── Create supplier ──────────────────────────────────────
     const handleCreateSupplier = useCallback(
         async (data: import("@/types").SupplierCreate) => {
@@ -329,10 +366,10 @@ export default function PurchasesPage() {
                             <PurchaseOrderDetailPanel
                                 po={detail.po}
                                 onClose={() => setSelectedId(null)}
-                                onSubmit={(id) => po.submitOrder(id)}
-                                onApprove={(id) => po.approveOrder(id)}
-                                onReject={(id, reason) => po.rejectOrder(id, { reason })}
-                                onCancel={(id, reason) => po.cancelOrder(id, { reason })}
+                                onSubmit={handleSubmit}
+                                onApprove={handleApprove}
+                                onReject={(id, reason) => handleReject(id, reason)}
+                                onCancel={(id, reason) => handleCancel(id, reason)}
                                 onReceive={handleReceive}
                                 actionLoading={po.actionState.loading}
                                 actionError={po.actionState.error}

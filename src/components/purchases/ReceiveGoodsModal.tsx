@@ -65,22 +65,21 @@ export function ReceiveGoodsModal({ po, onSubmit, onClose, submitting, submitErr
     const updateRow = (id: string, patch: Partial<ReceiveRow>) =>
         setRows((prev) => prev.map((r) => (r.item.id === id ? { ...r, ...patch } : r)));
 
-    // ── Validation ────────────────────────────────────────────
-    const validate = (): boolean => {
+    // ── Submit ────────────────────────────────────────────────
+    const handleSubmit = useCallback(async () => {
+        // Validate inline so we always read the current `rows` snapshot
         const errs: Record<string, string> = {};
         const included = rows.filter((r) => r.included);
 
         if (included.length === 0) {
             errs._global = "Select at least one item to receive";
         }
-
         for (const row of included) {
             const prefix = row.item.id;
             if (row.quantity_received < 1)
                 errs[`${prefix}_qty`] = "Must receive at least 1 unit";
             if (row.quantity_received > row.item.remaining_quantity)
-                errs[`${prefix}_qty`] =
-                    `Max ${row.item.remaining_quantity} unit(s) can be received`;
+                errs[`${prefix}_qty`] = `Max ${row.item.remaining_quantity} unit(s) can be received`;
             if (!row.batch_number.trim())
                 errs[`${prefix}_batch`] = "Batch number required";
             if (!row.expiry_date)
@@ -88,14 +87,8 @@ export function ReceiveGoodsModal({ po, onSubmit, onClose, submitting, submitErr
             else if (row.expiry_date <= today)
                 errs[`${prefix}_expiry`] = "Expiry date must be in the future";
         }
-
         setErrors(errs);
-        return Object.keys(errs).length === 0;
-    };
-
-    // ── Submit ────────────────────────────────────────────────
-    const handleSubmit = useCallback(async () => {
-        if (!validate()) return;
+        if (Object.keys(errs).length > 0) return;
 
         const items: ReceiveItemData[] = rows
             .filter((r) => r.included)
@@ -189,8 +182,8 @@ export function ReceiveGoodsModal({ po, onSubmit, onClose, submitting, submitErr
                                     <div
                                         key={p}
                                         className={`rounded-2xl border p-4 space-y-3 transition-colors ${row.included
-                                                ? "border-slate-200 bg-white"
-                                                : "border-slate-100 bg-slate-50 opacity-60"
+                                            ? "border-slate-200 bg-white"
+                                            : "border-slate-100 bg-slate-50 opacity-60"
                                             }`}
                                     >
                                         {/* Drug header + include toggle */}

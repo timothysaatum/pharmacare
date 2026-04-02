@@ -328,7 +328,7 @@ export function PurchaseOrderDetailPanel({
                                 </>
                             )}
 
-                            {/* PENDING → approve / reject */}
+                            {/* PENDING → approve / reject / cancel */}
                             {po.status === "pending" && (
                                 <>
                                     {canApprove && (
@@ -340,6 +340,12 @@ export function PurchaseOrderDetailPanel({
                                             <CheckCircle2 className="w-4 h-4" />
                                             Approve
                                         </button>
+                                    )}
+                                    {!canApprove && hasApprovePermission(user) && po.ordered_by === user?.id && (
+                                        <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-amber-700 bg-amber-50 rounded-xl border border-amber-200">
+                                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                                            You cannot approve your own order (four-eyes policy)
+                                        </div>
                                     )}
                                     {canApprove && (
                                         <button

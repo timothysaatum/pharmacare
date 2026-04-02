@@ -509,6 +509,11 @@ export interface BranchInventoryWithDetails extends BranchInventory {
     drug_name: string;
     drug_sku: string | null;
     drug_unit_price: number;
+    /**
+     * Joined from Drug.reorder_level so the inventory list can render stock
+     * status badges without a separate per-drug API call.
+     */
+    drug_reorder_level: number;
     branch_name: string;
     branch_code: string;
     /**
@@ -595,6 +600,49 @@ export interface StockAdjustmentResponse {
     created_at: string;
 }
 
+// ── Inter-branch stock transfer ───────────────────────────────
+
+export interface StockTransferCreate {
+    from_branch_id: string;
+    to_branch_id: string;
+    drug_id: string;
+    quantity: number;
+    /** Free-text reason; required by the backend route. */
+    reason: string;
+}
+
+export interface StockTransferResponse {
+    source_adjustment: StockAdjustmentResponse;
+    destination_adjustment: StockAdjustmentResponse;
+    success: boolean;
+    message: string;
+}
+
+// ── Inventory reports ─────────────────────────────────────────
+
+export interface LowStockReport {
+    organization_id: string;
+    /** null means the report covers all branches in the organisation */
+    branch_id: string | null;
+    report_date: string;
+    items: LowStockItem[];
+    total_items: number;
+    out_of_stock_count: number;
+    low_stock_count: number;
+}
+
+export interface ExpiringBatchReport {
+    organization_id: string;
+    branch_id: string | null;
+    report_date: string;
+    days_threshold: number;
+    items: ExpiringBatchItem[];
+    total_items: number;
+    total_quantity: number;
+    total_cost_value: number;
+    total_selling_value: number;
+}
+
 export interface LowStockItem {
     drug_id: string;
     drug_name: string;
@@ -619,7 +667,9 @@ export interface ExpiringBatchItem {
     expiry_date: string;
     days_until_expiry: number;
     cost_value: number;
-    selling_value: number;
+    // selling_value is computed server-side and may be absent in older API
+    // versions. Always guard with ?? before calling .toFixed().
+    selling_value: number | null;
 }
 
 // ============================================================
@@ -872,7 +922,10 @@ export interface Sale extends TimestampFields, SyncFields {
     status: SaleStatus;
     receipt_printed: boolean;
     receipt_emailed: boolean;
-    items: SaleItem[];
+    // items is only present on SaleWithDetails (single-sale fetch).
+    // The list endpoint returns SaleResponse which omits items but includes items_count.
+    items?: SaleItem[];
+    items_count: number;
 }
 
 /** Sale with all resolved detail fields — used by ProcessSaleResponse and receipt display */
@@ -1103,6 +1156,13 @@ export interface PurchaseOrder extends TimestampFields, SyncFields {
     received_date: string | null;
     notes: string | null;
 }
+
+/**
+ * Alias matching the Python `PurchaseOrderResponse` schema name.
+ * Components that talk directly to the API should use this name;
+ * `PurchaseOrder` is kept for the local SQLite / sync layer.
+ */
+export type PurchaseOrderResponse = PurchaseOrder;
 
 export interface PurchaseOrderWithDetails extends PurchaseOrder {
     items: PurchaseOrderItemWithDetails[];
