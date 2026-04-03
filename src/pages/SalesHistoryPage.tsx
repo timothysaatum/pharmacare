@@ -252,7 +252,7 @@ function SaleDetailPanel({
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
                 <div>
                     <p className="text-xs font-bold text-ink-muted uppercase tracking-widest mb-0.5">Sale Detail</p>
-                     {sale && (
+                    {sale && (
                         <p className="text-sm font-bold text-ink font-mono">{sale.sale_number}</p>
                     )}
                 </div>
@@ -553,10 +553,13 @@ export default function SalesHistoryPage() {
     const { user, activeBranchId } = useAuthStore();
     // Roles that have process_refunds by default
     const REFUND_ROLES = ["manager", "admin", "super_admin"];
+    // user.permissions can be null/undefined when the API omits the field
+    // (e.g. during an active session whose token predates the permissions column).
+    // Optional chaining + fallback arrays prevent a crash before the first render.
     const canRefund = user
         ? REFUND_ROLES.includes(user.role) ||
-        (user.permissions.additional.includes("process_refunds") &&
-            !user.permissions.denied.includes("process_refunds"))
+        ((user.permissions?.additional ?? []).includes("process_refunds") &&
+            !(user.permissions?.denied ?? []).includes("process_refunds"))
         : false;
 
     // ── List state ────────────────────────────────────────────

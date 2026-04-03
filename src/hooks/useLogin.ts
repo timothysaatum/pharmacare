@@ -20,8 +20,26 @@ export const loginSchema = z.object({
 
 export type LoginValues = z.infer<typeof loginSchema>;
 
-export function useLogin() {
-    const { login, setupState } = useAuthStore();
+// ─────────────────────────────────────────────────────────────────────────────
+// Options
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface UseLoginOptions {
+    /**
+     * If provided, this callback is called after a successful login INSTEAD of
+     * the default setupState-based navigation.  Use this when the caller needs
+     * to perform extra work (e.g. fetching branches) before deciding where to
+     * redirect.
+     */
+    onSuccess?: () => void | Promise<void>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hook
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function useLogin(options: UseLoginOptions = {}) {
+    const { login } = useAuthStore();
     const navigate = useNavigate();
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -33,7 +51,7 @@ export function useLogin() {
         defaultValues: { username: "", password: "" },
     });
 
-    // Clear error when the user starts editing
+    // Clear error whenever the user edits any field
     form.watch(() => {
         if (error) setError(null);
     });
@@ -46,8 +64,13 @@ export function useLogin() {
         try {
             await login(values.username, values.password);
 
-            // Read setupState from the store *after* login resolves —
-            // authStore.login() sets it synchronously before this line runs.
+            if (options.onSuccess) {
+                // Caller handles all navigation
+                await options.onSuccess();
+                return;
+            }
+
+            // Default: navigate based on setupState set by authStore.login()
             const state = useAuthStore.getState().setupState;
 
             switch (state) {
@@ -61,7 +84,6 @@ export function useLogin() {
                     navigate("/onboarding", { replace: true });
                     break;
                 default:
-                    // Fallback: should not happen, but don't leave the user stranded
                     navigate("/drugs", { replace: true });
             }
         } catch (err) {

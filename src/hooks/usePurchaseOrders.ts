@@ -84,8 +84,6 @@ export function usePurchaseOrders(options: UsePurchaseOrdersOptions = {}) {
             setTotalPages(data.total_pages);
             setPage(targetPage);
         } catch (err: unknown) {
-            // Axios names its cancellation error "CanceledError"; native fetch uses "AbortError".
-            // Either way it is an intentional abort — never surface it as a user-visible error.
             const name = (err as { name?: string }).name;
             if (name !== "AbortError" && name !== "CanceledError") {
                 setListError(parseApiError(err));

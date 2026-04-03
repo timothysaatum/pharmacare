@@ -127,6 +127,8 @@ export function parseApiError(err: unknown): string {
             if (err.code === "ECONNREFUSED" || err.code === "ERR_NETWORK")
                 return "Cannot connect to server. Make sure the backend is running.";
             if (err.code === "ECONNABORTED") return "Request timed out. Try again.";
+            
+            if (err.code === "ERR_CANCELED") return "";
             return err.message;
         }
         // FastAPI string detail

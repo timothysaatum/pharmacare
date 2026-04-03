@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
     Pill, Package, ShoppingCart, Users, BarChart2,
-    LogOut, Building2, Menu, X, ScrollText, ShoppingBag, Receipt, Settings,
+    LogOut, Building2, Menu, X, ScrollText, ShoppingBag,
+    Receipt, Settings, UserCog,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { branchApi } from "@/api/branches";
@@ -35,6 +36,12 @@ const NAV_ITEMS: NavItem[] = [
         roles: ["admin", "manager", "super_admin"],
     },
     {
+        to: "/users",
+        icon: UserCog,
+        label: "Users",
+        roles: ["admin", "super_admin", "manager"],
+    },
+    {
         to: "/settings",
         icon: Settings,
         label: "Settings",
@@ -56,7 +63,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
-
     const [branchName, setBranchName] = useState<string | null>(null);
 
     useEffect(() => {
@@ -67,13 +73,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         let cancelled = false;
         branchApi
             .getById(activeBranchId)
-            .then((b) => {
-                if (!cancelled) setBranchName(b.name);
-            })
-            .catch(() => {
-                // Silently fall back — worst case shows "Branch active"
-                if (!cancelled) setBranchName(null);
-            });
+            .then((b) => { if (!cancelled) setBranchName(b.name); })
+            .catch(() => { if (!cancelled) setBranchName(null); });
         return () => { cancelled = true; };
     }, [activeBranchId]);
 
@@ -105,7 +106,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </div>
                     {!collapsed && (
                         <span className="font-display font-bold text-sm flex-1 truncate">
-                            Pharmacare
+                            Laso
                         </span>
                     )}
                     <button
@@ -117,6 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </button>
                 </div>
 
+                {/* Branch pill */}
                 {!collapsed && activeBranchId && (
                     <div className="mx-3 mt-3 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 flex items-center gap-2">
                         <Building2 className="w-3 h-3 text-white/40 flex-shrink-0" />
@@ -129,7 +131,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </div>
                 )}
 
-                {/* Collapsed branch dot indicator */}
+                {/* Collapsed branch dot */}
                 {collapsed && activeBranchId && (
                     <div className="flex justify-center mt-3">
                         <div
@@ -149,7 +151,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                                 to={item.to}
                                 title={collapsed ? item.label : undefined}
                                 className={({ isActive }) =>
-                                    `flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors group ${isActive
+                                    `flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm font-medium transition-colors ${isActive
                                         ? "bg-brand-500 text-white"
                                         : "text-white/55 hover:text-white hover:bg-white/10"
                                     } ${collapsed ? "justify-center px-0" : ""}`

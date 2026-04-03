@@ -16,6 +16,7 @@ import CustomersPage from "@/pages/CustomersPage";
 import PurchasesPage from "@/pages/PurchasesPage";
 import SalesHistoryPage from "@/pages/SalesHistoryPage";
 import SettingsPage from "@/pages/SettingsPage";
+import UsersPage from "@/pages/UsersPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -63,6 +64,18 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore();
   if (!user || !["admin", "super_admin"].includes(user.role)) {
+    return <Navigate to="/drugs" replace />;
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Guards routes that require admin, super_admin, or manager role.
+ * Managers have read access to users in their branch scope.
+ */
+function RequireManager({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore();
+  if (!user || !["admin", "super_admin", "manager"].includes(user.role)) {
     return <Navigate to="/drugs" replace />;
   }
   return <>{children}</>;
@@ -207,10 +220,10 @@ function AppRoutes() {
         />
 
         {/*
-                 * /setup — shown when authenticated but setup is incomplete.
-                 * RequireSetupAccess blocks fully-ready users from entering.
-                 * SetupRequiredPage renders the correct panel based on setupState.
-                 */}
+         * /setup — shown when authenticated but setup is incomplete.
+         * RequireSetupAccess blocks fully-ready users from entering.
+         * SetupRequiredPage renders the correct panel based on setupState.
+         */}
         <Route
           path="/setup"
           element={
@@ -221,10 +234,10 @@ function AppRoutes() {
         />
 
         {/*
-                 * /onboarding — super_admin org creation wizard.
-                 * Also uses RequireSetupAccess so a ready user can't accidentally
-                 * re-run onboarding, but a needs_onboard super_admin can proceed.
-                 */}
+         * /onboarding — super_admin org creation wizard.
+         * Also uses RequireSetupAccess so a ready user can't accidentally
+         * re-run onboarding, but a needs_onboard super_admin can proceed.
+         */}
         <Route
           path="/onboarding"
           element={
@@ -263,6 +276,24 @@ function AppRoutes() {
           path="/sales"
           element={<RequireAuth><AppShell><SalesHistoryPage /></AppShell></RequireAuth>}
         />
+
+        {/*
+         * /users — user management.
+         * Accessible to admin, super_admin, and manager.
+         * The page itself enforces per-role data scoping (managers only see
+         * users in their branches; only admins/super_admins can create/delete).
+         */}
+        <Route
+          path="/users"
+          element={
+            <RequireAuth>
+              <RequireManager>
+                <AppShell><UsersPage /></AppShell>
+              </RequireManager>
+            </RequireAuth>
+          }
+        />
+
         <Route
           path="/settings"
           element={

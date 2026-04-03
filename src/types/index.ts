@@ -77,6 +77,7 @@ export interface User extends TimestampFields, SyncFields {
     employee_id: string | null;
     assigned_branches: string[];
     permissions: UserPermissions;
+    account_locked_until: string | null;
     is_active: boolean;
     last_login: string | null;
     two_factor_enabled: boolean;
