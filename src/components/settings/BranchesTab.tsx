@@ -1,5 +1,4 @@
 /**
- * BranchesTab.tsx
  * ─────────────────────────────────────────────────────────────
  * Full branch management UI within SettingsPage.
  *
@@ -16,12 +15,14 @@ import { useState, useMemo } from "react";
 import {
     Plus, RefreshCw, AlertTriangle, Search,
     Building2, CheckCircle2, XCircle, Power, PowerOff,
-    MapPin, Phone, Mail, Hash,
+    MapPin, Phone, Mail, Hash, Pencil,
 } from "lucide-react";
 import { useBranches } from "@/hooks/useBranches";
+import { useBranchEdit } from "@/hooks/useBranchEdit";
 import { CreateBranchPanel } from "@/components/settings/CreateBranchPanel";
+import { EditBranchPanel } from "@/components/settings/EditBranchPanel";
 import { useAuthStore } from "@/stores/authStore";
-import type { BranchListItem } from "@/types";
+import type { BranchListItem, Branch } from "@/types";
 
 // ─── Status badge ────────────────────────────────────────────
 
@@ -45,12 +46,16 @@ function BranchRow({
     branch,
     onActivate,
     onDeactivate,
+    onEdit,
     actionLoading,
+    canManage,
 }: {
     branch: BranchListItem;
     onActivate: (id: string) => void;
     onDeactivate: (id: string) => void;
+    onEdit: (branch: BranchListItem) => void;
     actionLoading: boolean;
+    canManage: boolean;
 }) {
     return (
         <div className="px-5 py-4 hover:bg-slate-50/60 transition-colors">
@@ -84,8 +89,18 @@ function BranchRow({
                     </div>
                 </div>
 
-                {/* Right: toggle action */}
-                <div className="flex-shrink-0">
+                {/* Right: actions */}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    {canManage && (
+                        <button
+                            onClick={() => onEdit(branch)}
+                            title="Edit branch"
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-500 border border-slate-200 rounded-xl hover:text-brand-600 hover:border-brand-200 hover:bg-brand-50 transition-colors"
+                        >
+                            <Pencil className="w-3.5 h-3.5" />
+                            Edit
+                        </button>
+                    )}
                     {branch.is_active ? (
                         <button
                             onClick={() => onDeactivate(branch.id)}
@@ -135,7 +150,7 @@ function BranchSkeleton() {
 export function BranchesTab() {
     const { user } = useAuthStore();
     const {
-        branches, loading, error,
+        branches, setBranches, loading, error,
         creating, createError, clearCreateError,
         actionState,
         createBranch, activateBranch, deactivateBranch,
@@ -143,10 +158,33 @@ export function BranchesTab() {
     } = useBranches();
 
     const [showCreate, setShowCreate] = useState(false);
+    const [editingBranch, setEditingBranch] = useState<BranchListItem | null>(null);
     const [search, setSearch] = useState("");
     const [filterActive, setFilterActive] = useState<"all" | "active" | "inactive">("all");
 
+    const { saving: editSaving, saveError: editError, clearSaveError: clearEditError, updateBranch } = useBranchEdit();
+
     const canManage = user?.role === "admin" || user?.role === "super_admin";
+
+    const handleBranchSaved = (updated: Branch) => {
+        // Merge updated branch back into the list
+        setBranches((prev) =>
+            prev.map((b) =>
+                b.id === updated.id
+                    ? {
+                        ...b,
+                        name: updated.name,
+                        code: updated.code,
+                        phone: updated.phone,
+                        email: updated.email,
+                        is_active: updated.is_active,
+                        manager_name: updated.manager_name,
+                    }
+                    : b
+            ).sort((a, b) => a.name.localeCompare(b.name))
+        );
+        setEditingBranch(null);
+    };
 
     // Client-side filter — list is always small (< 200 branches per org)
     const filtered = useMemo(() => {
@@ -194,8 +232,8 @@ export function BranchesTab() {
                                 key={f}
                                 onClick={() => setFilterActive(f)}
                                 className={`px-3 h-9 transition-colors capitalize ${filterActive === f
-                                        ? "bg-brand-600 text-white"
-                                        : "text-slate-500 hover:bg-slate-50"
+                                    ? "bg-brand-600 text-white"
+                                    : "text-slate-500 hover:bg-slate-50"
                                     }`}
                             >
                                 {f}
@@ -225,6 +263,7 @@ export function BranchesTab() {
                         <button
                             onClick={() => {
                                 clearCreateError();
+                                setEditingBranch(null);
                                 setShowCreate(true);
                             }}
                             className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-xl transition-colors shadow-sm"
@@ -285,7 +324,9 @@ export function BranchesTab() {
                                     branch={branch}
                                     onActivate={activateBranch}
                                     onDeactivate={deactivateBranch}
+                                    onEdit={(b) => { clearEditError(); setEditingBranch(b); setShowCreate(false); }}
                                     actionLoading={actionState.loading}
+                                    canManage={canManage}
                                 />
                             ))}
                         </div>
@@ -293,15 +334,26 @@ export function BranchesTab() {
                 </div>
             </div>
 
-            {/* ── Right: create panel ─────────────────────────── */}
-            {showCreate && (
+            {/* ── Right: create or edit panel ─────────────────── */}
+            {(showCreate || editingBranch) && (
                 <div className="w-[400px] flex-shrink-0 flex flex-col min-h-0 overflow-hidden border-l border-slate-200">
-                    <CreateBranchPanel
-                        onSubmit={createBranch}
-                        onClose={() => setShowCreate(false)}
-                        submitting={creating}
-                        submitError={createError}
-                    />
+                    {showCreate ? (
+                        <CreateBranchPanel
+                            onSubmit={createBranch}
+                            onClose={() => setShowCreate(false)}
+                            submitting={creating}
+                            submitError={createError}
+                        />
+                    ) : editingBranch ? (
+                        <EditBranchPanel
+                            branch={editingBranch}
+                            onSaved={handleBranchSaved}
+                            onClose={() => setEditingBranch(null)}
+                            onUpdate={updateBranch}
+                            saving={editSaving}
+                            saveError={editError}
+                        />
+                    ) : null}
                 </div>
             )}
         </div>

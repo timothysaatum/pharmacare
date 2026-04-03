@@ -1,5 +1,4 @@
 /**
- * SettingsPage.tsx
  * ─────────────────────────────────────────────────────────────
  * Admin-only settings hub. Currently exposes the Branches tab.
  * Structured for easy expansion: add Users, Billing, Org tabs
@@ -12,8 +11,9 @@
 import { useState } from "react";
 import { GitBranch, Building2, ChevronRight } from "lucide-react";
 import { BranchesTab } from "@/components/settings/BranchesTab";
+import { OrganizationTab } from "@/components/settings/OrganizationTab";
 
-type TabId = "branches";
+type TabId = "branches" | "organization";
 
 interface Tab {
     id: TabId;
@@ -24,6 +24,12 @@ interface Tab {
 
 const TABS: Tab[] = [
     {
+        id: "organization",
+        icon: Building2,
+        label: "Organisation",
+        description: "Profile & settings",
+    },
+    {
         id: "branches",
         icon: GitBranch,
         label: "Branches",
@@ -32,7 +38,7 @@ const TABS: Tab[] = [
 ];
 
 export default function SettingsPage() {
-    const [activeTab, setActiveTab] = useState<TabId>("branches");
+    const [activeTab, setActiveTab] = useState<TabId>("organization");
 
     const active = TABS.find((t) => t.id === activeTab)!;
 
@@ -83,6 +89,7 @@ export default function SettingsPage() {
 
                 {/* Tab content */}
                 <div className="flex-1 min-h-0 overflow-hidden">
+                    {activeTab === "organization" && <OrganizationTab />}
                     {activeTab === "branches" && <BranchesTab />}
                 </div>
             </div>

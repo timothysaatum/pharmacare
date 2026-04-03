@@ -86,13 +86,15 @@ export function useBranches() {
     );
 
     // ── Activate / Deactivate ─────────────────────────────────
-    const runAction = useCallback(async (fn: () => Promise<void>) => {
+    const runAction = useCallback(async (fn: () => Promise<void>): Promise<boolean> => {
         setActionState({ loading: true, error: null });
         try {
             await fn();
             setActionState({ loading: false, error: null });
+            return true;
         } catch (err) {
             setActionState({ loading: false, error: parseApiError(err) });
+            return false;
         }
     }, []);
 
@@ -102,13 +104,13 @@ export function useBranches() {
             setBranches((prev) =>
                 prev.map((b) => (b.id === id ? { ...b, is_active: true } : b))
             );
-            await runAction(async () => {
+            const ok = await runAction(async () => {
                 await branchApi.activate(id);
             });
             // Revert on error by refetching
-            if (actionState.error) await fetchBranches();
+            if (!ok) await fetchBranches();
         },
-        [runAction, fetchBranches, actionState.error],
+        [runAction, fetchBranches],
     );
 
     const deactivateBranch = useCallback(
@@ -116,16 +118,17 @@ export function useBranches() {
             setBranches((prev) =>
                 prev.map((b) => (b.id === id ? { ...b, is_active: false } : b))
             );
-            await runAction(async () => {
+            const ok = await runAction(async () => {
                 await branchApi.deactivate(id);
             });
-            if (actionState.error) await fetchBranches();
+            if (!ok) await fetchBranches();
         },
-        [runAction, fetchBranches, actionState.error],
+        [runAction, fetchBranches],
     );
 
     return {
         branches,
+        setBranches,   // exposed so BranchesTab can merge edits without refetch
         loading,
         error,
         creating,
