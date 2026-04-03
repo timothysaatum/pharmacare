@@ -150,10 +150,6 @@ export function PurchaseOrderDetailPanel({
     const [reasonText, setReasonText] = useState("");
     const [showReceive, setShowReceive] = useState(false);
 
-    // FIX: was `user?.permissions?.("approve_purchase_orders")` — permissions
-    // is { additional: string[], denied: string[] }, not a callable function.
-    // Approval is role-based (super_admin / admin / manager) with additional /
-    // denied overrides, and self-approval is always blocked.
     const canApprove =
         hasApprovePermission(user) &&
         po.ordered_by !== user?.id;

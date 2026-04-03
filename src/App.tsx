@@ -7,6 +7,7 @@ import { syncEngine } from "@/lib/syncEngine";
 import { AppShell } from "@/components/layout/AppShell";
 import OnboardingPage from "@/pages/OnboardingPage";
 import LoginPage from "@/pages/LoginPage";
+import SetupRequiredPage from "@/pages/SetupRequiredPage";
 import DrugListPage from "@/pages/DrugListPage";
 import InventoryPage from "@/pages/InventoryPage";
 import POSPage from "@/pages/POSPage";
@@ -14,6 +15,7 @@ import ContractsPage from "@/pages/ContractsPage";
 import CustomersPage from "@/pages/CustomersPage";
 import PurchasesPage from "@/pages/PurchasesPage";
 import SalesHistoryPage from "@/pages/SalesHistoryPage";
+import SettingsPage from "@/pages/SettingsPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,39 +31,87 @@ function ComingSoon({ label }: { label: string }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Route guards
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Protects app routes.
+ *
+ * Three outcomes:
+ *  1. Not authenticated at all → /login
+ *  2. Authenticated but setup incomplete → /setup
+ *     (covers needs_branch AND needs_onboard — SetupRequiredPage handles both)
+ *  3. Authenticated + ready → render children
+ */
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, activeBranchId } = useAuthStore();
-  if (!isAuthenticated || !activeBranchId) {
+  const { isAuthenticated, setupState } = useAuthStore();
+
+  if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+  if (setupState !== "ready") {
+    return <Navigate to="/setup" replace />;
   }
   return <>{children}</>;
 }
 
-// Guard /onboarding so already-authenticated users are redirected away.
-// Without this, an admin who accidentally navigates to /onboarding while
-// logged in sees the full creation form, which is confusing and dangerous.
-function RequireUnauthenticated({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, activeBranchId } = useAuthStore();
-  if (isAuthenticated && activeBranchId) {
+/**
+ * Guards routes that require admin or super_admin role.
+ * Assumes the user is already authenticated (used inside RequireAuth).
+ */
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore();
+  if (!user || !["admin", "super_admin"].includes(user.role)) {
     return <Navigate to="/drugs" replace />;
   }
   return <>{children}</>;
 }
 
+/**
+ * Guards /login so a fully-ready user doesn't land back on the login page.
+ * Authenticated users who are NOT ready are allowed through to /login
+ * only if they explicitly landed there — normally the auth flow routes them
+ * to /setup automatically.  Keeping the redirect tight here prevents loops.
+ */
+function RequireUnauthenticated({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, setupState } = useAuthStore();
+
+  if (isAuthenticated && setupState === "ready") {
+    return <Navigate to="/drugs" replace />;
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Guards /onboarding so an already-ready user can't accidentally re-run setup.
+ *
+ * We intentionally allow needs_onboard (super_admin) and needs_branch (admin
+ * who skipped) through — they legitimately need to be here.
+ */
+function RequireSetupAccess({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, setupState } = useAuthStore();
+
+  // Fully authenticated + all set up — nothing to do here
+  if (isAuthenticated && setupState === "ready") {
+    return <Navigate to="/drugs" replace />;
+  }
+  return <>{children}</>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync gate — waits for the initial sync to settle before showing app content.
+// Only active when the user is fully ready (has a branch).
+// ─────────────────────────────────────────────────────────────────────────────
 
 function SyncGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, activeBranchId } = useAuthStore();
   const [initialSyncDone, setInitialSyncDone] = useState(false);
-  // Ref prevents the gate from re-opening once it has been passed
   const hasPassedGate = useRef(false);
 
   useEffect(() => {
-    // Not authenticated yet — nothing to gate
-    if (!isAuthenticated || !activeBranchId) {
-      return;
-    }
+    if (!isAuthenticated || !activeBranchId) return;
 
-    // Already passed the gate in a previous render (e.g. branch switch)
     if (hasPassedGate.current) {
       setInitialSyncDone(true);
       return;
@@ -78,21 +128,13 @@ function SyncGate({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Engine is "syncing" — wait for it to reach a terminal state
     const unsub = syncEngine.subscribe((status) => {
-      if (
-        status === "idle" ||
-        status === "offline" ||
-        status === "error"
-      ) {
+      if (status === "idle" || status === "offline" || status === "error") {
         hasPassedGate.current = true;
         setInitialSyncDone(true);
       }
     });
 
-    // Safety net: if the engine never notifies us within 5 s, unblock anyway.
-    // This guards against edge cases like an engine that fires its callback
-    // before subscribe() returns.
     const safety = setTimeout(() => {
       hasPassedGate.current = true;
       setInitialSyncDone(true);
@@ -104,7 +146,6 @@ function SyncGate({ children }: { children: React.ReactNode }) {
     };
   }, [isAuthenticated, activeBranchId]);
 
-  // Show loading spinner only while authenticated + waiting for first sync
   if (isAuthenticated && activeBranchId && !initialSyncDone) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -124,12 +165,15 @@ function SyncGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Routes
+// ─────────────────────────────────────────────────────────────────────────────
+
 function AppRoutes() {
-  const { isAuthenticated, activeBranchId, isLoading, initialize } = useAuthStore();
+  const { isAuthenticated, setupState, isLoading, initialize } = useAuthStore();
 
   useEffect(() => {
     initialize();
-    // Broadcast auth:logout → hard redirect so all state is cleared cleanly
     const handler = () => { window.location.href = "/login"; };
     window.addEventListener("auth:logout", handler);
     return () => window.removeEventListener("auth:logout", handler);
@@ -146,25 +190,51 @@ function AppRoutes() {
     );
   }
 
-  const isFullyAuthenticated = isAuthenticated && !!activeBranchId;
+  const isReady = isAuthenticated && setupState === "ready";
 
   return (
     <SyncGate>
       <Routes>
-        {/* ── Public ── */}
+        {/* ── Public / setup ── */}
 
-        {/* Wrap /onboarding in RequireUnauthenticated so logged-in
-            users are redirected to /drugs instead of seeing the setup form. */}
-        <Route
-          path="/onboarding"
-          element={<RequireUnauthenticated><OnboardingPage /></RequireUnauthenticated>}
-        />
         <Route
           path="/login"
-          element={isFullyAuthenticated ? <Navigate to="/drugs" replace /> : <LoginPage />}
+          element={
+            <RequireUnauthenticated>
+              <LoginPage />
+            </RequireUnauthenticated>
+          }
         />
 
-        {/* ── Protected ── */}
+        {/*
+                 * /setup — shown when authenticated but setup is incomplete.
+                 * RequireSetupAccess blocks fully-ready users from entering.
+                 * SetupRequiredPage renders the correct panel based on setupState.
+                 */}
+        <Route
+          path="/setup"
+          element={
+            <RequireSetupAccess>
+              <SetupRequiredPage />
+            </RequireSetupAccess>
+          }
+        />
+
+        {/*
+                 * /onboarding — super_admin org creation wizard.
+                 * Also uses RequireSetupAccess so a ready user can't accidentally
+                 * re-run onboarding, but a needs_onboard super_admin can proceed.
+                 */}
+        <Route
+          path="/onboarding"
+          element={
+            <RequireSetupAccess>
+              <OnboardingPage />
+            </RequireSetupAccess>
+          }
+        />
+
+        {/* ── Protected app routes ── */}
         <Route
           path="/drugs"
           element={<RequireAuth><AppShell><DrugListPage /></AppShell></RequireAuth>}
@@ -194,19 +264,35 @@ function AppRoutes() {
           element={<RequireAuth><AppShell><SalesHistoryPage /></AppShell></RequireAuth>}
         />
         <Route
+          path="/settings"
+          element={
+            <RequireAuth>
+              <RequireAdmin>
+                <AppShell><SettingsPage /></AppShell>
+              </RequireAdmin>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/settings/:tab"
+          element={
+            <RequireAuth>
+              <RequireAdmin>
+                <AppShell><SettingsPage /></AppShell>
+              </RequireAdmin>
+            </RequireAuth>
+          }
+        />
+        <Route
           path="/reports"
           element={<RequireAuth><AppShell><ComingSoon label="Reports" /></AppShell></RequireAuth>}
         />
 
-        <Route
-          path="/dashboard"
-          element={<Navigate to="/drugs" replace />}
-        />
-
         {/* ── Redirects ── */}
+        <Route path="/dashboard" element={<Navigate to="/drugs" replace />} />
         <Route
           path="/"
-          element={<Navigate to={isFullyAuthenticated ? "/drugs" : "/login"} replace />}
+          element={<Navigate to={isReady ? "/drugs" : "/login"} replace />}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

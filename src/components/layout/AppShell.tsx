@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
     Pill, Package, ShoppingCart, Users, BarChart2,
-    LogOut, Building2, Menu, X, ScrollText, ShoppingBag, Receipt,
+    LogOut, Building2, Menu, X, ScrollText, ShoppingBag, Receipt, Settings,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { branchApi } from "@/api/branches";
@@ -33,6 +33,12 @@ const NAV_ITEMS: NavItem[] = [
         icon: BarChart2,
         label: "Reports",
         roles: ["admin", "manager", "super_admin"],
+    },
+    {
+        to: "/settings",
+        icon: Settings,
+        label: "Settings",
+        roles: ["admin", "super_admin"],
     },
 ];
 
