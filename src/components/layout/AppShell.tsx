@@ -63,13 +63,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
-    const [branchName, setBranchName] = useState<string | null>(null);
+    // undefined = not yet fetched (show "Loading…")
+    // string    = fetched successfully
+    // null      = fetch failed (e.g. 403 for cashier/pharmacist — show a
+    //             safe fallback so it never stays stuck on "Loading…")
+    const [branchName, setBranchName] = useState<string | null | undefined>(undefined);
 
     useEffect(() => {
         if (!activeBranchId) {
-            setBranchName(null);
+            setBranchName(undefined);
             return;
         }
+        setBranchName(undefined); // reset while the new fetch is in-flight
         let cancelled = false;
         branchApi
             .getById(activeBranchId)
@@ -124,9 +129,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         <Building2 className="w-3 h-3 text-white/40 flex-shrink-0" />
                         <span
                             className="text-xs text-white/60 truncate"
-                            title={branchName ?? undefined}
+                            title={branchName ?? activeBranchId ?? undefined}
                         >
-                            {branchName ?? "Loading…"}
+                            {branchName === undefined
+                                ? "Loading…"
+                                : branchName ?? (activeBranchId ? activeBranchId.slice(0, 8) + "…" : "Branch")}
                         </span>
                     </div>
                 )}
