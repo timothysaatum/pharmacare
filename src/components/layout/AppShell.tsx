@@ -63,10 +63,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const navigate = useNavigate();
     const [collapsed, setCollapsed] = useState(false);
     const [loggingOut, setLoggingOut] = useState(false);
-    // undefined = not yet fetched (show "Loading…")
-    // string    = fetched successfully
-    // null      = fetch failed (e.g. 403 for cashier/pharmacist — show a
-    //             safe fallback so it never stays stuck on "Loading…")
+    
     const [branchName, setBranchName] = useState<string | null | undefined>(undefined);
 
     useEffect(() => {
